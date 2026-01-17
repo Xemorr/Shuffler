@@ -34,8 +34,9 @@ public class Game {
             discoverRecipes(player);
             player.getInventory().clear();
             player.getInventory().addItem(new ItemStack(Material.COOKED_BEEF, 8));
-            int x = ThreadLocalRandom.current().nextInt(300);
-            int z = ThreadLocalRandom.current().nextInt(300);
+            player.getInventory().addItem(new ItemStack(Material.TORCH, 64));
+            int x = ThreadLocalRandom.current().nextInt(300) - 150;
+            int z = ThreadLocalRandom.current().nextInt(300) - 150;
             player.teleport(
                 new Location(
                     player.getWorld(),

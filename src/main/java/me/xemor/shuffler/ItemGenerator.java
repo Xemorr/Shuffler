@@ -1,5 +1,6 @@
 package me.xemor.shuffler;
 
+import com.google.common.collect.HashMultimap;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
@@ -17,8 +18,8 @@ import java.util.stream.Stream;
 public class ItemGenerator implements Listener {
 
     private final List<Recipe> recipes;
-    private ProbabilityBag availableMaterials = new ProbabilityBag();
-    private ProbabilityBag availableBlocksToStandOn = new ProbabilityBag();
+    private ProbabilityBag availableMaterialsBag = new ProbabilityBag();
+    private ProbabilityBag availableBlocksToStandOnBag = new ProbabilityBag();
 
     public ItemGenerator() {
         recipes = new ArrayList<>();
@@ -74,27 +75,73 @@ public class ItemGenerator implements Listener {
         chunks = chunks.stream().limit(30).toList();
         int averageY = (int) (alivePlayers.stream().map(Entity::getY).reduce(Double::sum).orElse(0D) / alivePlayers.size());
 
+        HashMultimap<Long, Material> availableMaterialsPerChunkKey = HashMultimap.create();
+        List<Material> availableMaterials = new ArrayList<>();
+        List<Material> availableBlocksToStandOn = new ArrayList<>();
         for (Chunk chunk : chunks) {
-            availableMaterials.add(Arrays.stream(chunk.getEntities()).flatMap((entity) -> {
+            List<Material> mobDrops = Arrays.stream(chunk.getEntities()).flatMap((entity) -> {
                 LootTables lootTables = Registry.LOOT_TABLES.get(NamespacedKey.minecraft("entities/" + entity.getType().getKey().getKey()));
                 if (lootTables == null) return Stream.of();
                 return lootTables.getLootTable().populateLoot(ThreadLocalRandom.current(), (new LootContext.Builder(entity.getLocation()).lootedEntity(entity).killer(alivePlayers.getFirst())).build())
                         .stream().map(ItemStack::getType);
-            }).toList());
+            }).toList();
+            availableMaterialsPerChunkKey.putAll(chunk.getChunkKey(), mobDrops);
+            availableMaterials.addAll(mobDrops);
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
-                    int minHeight = (int) Math.max(chunk.getWorld().getMinHeight(), averageY - (Math.pow(2, level - 1) * 16));
+                    int minHeight = (int) Math.max(chunk.getWorld().getMinHeight(), averageY - ((Math.pow(2, level - 1) + 10)));
                     for (int y = minHeight; y < chunk.getWorld().getMaxHeight(); y++) {
                         Block block = chunk.getBlock(x, y, z);
                         if (block.getType().isAir()) continue;
                         availableBlocksToStandOn.add(block.getType());
-                        availableMaterials.add(block.getDrops().stream().map(ItemStack::getType).toList());
+                        availableMaterialsPerChunkKey.put(chunk.getChunkKey(), block.getType());
+                        availableMaterials.addAll(block.getDrops().stream().map(ItemStack::getType).toList());
+                        availableMaterialsPerChunkKey.putAll(chunk.getChunkKey(), block.getDrops().stream().map(ItemStack::getType).toList());
                     }
                 }
             }
         }
 
-        ProbabilityBag craftingBag = new ProbabilityBag().add(availableMaterials);
+        Map<Material, Integer> materialChunkOccurrences = availableMaterialsPerChunkKey.asMap().values().stream()
+                .flatMap(Collection::stream)
+                .collect(Collectors.groupingBy(
+                        material -> material,
+                        Collectors.collectingAndThen(
+                                Collectors.counting(),
+                                Long::intValue
+                        )
+                ));
+
+
+        Map<Material, Integer> availableMaterialFrequencies = availableMaterials.stream()
+                .collect(Collectors.groupingBy(
+                        material -> material,
+                        Collectors.collectingAndThen(
+                                Collectors.counting(),
+                                Long::intValue
+                        )
+                ));
+
+        Map<Material, Integer> availableBlocksFrequencies = availableBlocksToStandOn.stream()
+                .collect(Collectors.groupingBy(
+                        material -> material,
+                        Collectors.collectingAndThen(
+                                Collectors.counting(),
+                                Long::intValue
+                        )
+                ));
+
+        for (Map.Entry<Material, Integer> entry : availableMaterialFrequencies.entrySet()) {
+            availableMaterialsBag.add(entry.getKey(), materialChunkOccurrences.getOrDefault(entry.getKey(), 0) * entry.getValue());
+        }
+
+        for (Map.Entry<Material, Integer> entry : availableBlocksFrequencies.entrySet()) {
+            availableBlocksToStandOnBag.add(entry.getKey(), materialChunkOccurrences.getOrDefault(entry.getKey(), 0) * entry.getValue());
+        }
+        
+
+
+        ProbabilityBag craftingBag = new ProbabilityBag().add(availableMaterialsBag);
         for (int i = 0; i < level - 1; i++) {
             for (Recipe recipe : recipes) {
                 List<Material> ingredients = switch (recipe) {
@@ -132,7 +179,7 @@ public class ItemGenerator implements Listener {
             }
         }
 
-        return craftingBag.add(availableBlocksToStandOn);
+        return craftingBag.add(availableBlocksToStandOnBag);
     }
 
 /*
