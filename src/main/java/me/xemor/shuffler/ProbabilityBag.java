@@ -32,6 +32,10 @@ public class ProbabilityBag {
         return bag.getOrDefault(type, 0D) / totalWeighting;
     }
 
+    public double getWeighting(Material type) {
+        return bag.getOrDefault(type, 0D);
+    }
+
     public boolean contains(Material type) {
         return bag.containsKey(type);
     }

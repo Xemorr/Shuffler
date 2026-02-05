@@ -18,8 +18,8 @@ import java.util.stream.Stream;
 public class ItemGenerator implements Listener {
 
     private final List<Recipe> recipes;
-    private ProbabilityBag availableMaterialsBag = new ProbabilityBag();
-    private ProbabilityBag availableBlocksToStandOnBag = new ProbabilityBag();
+    private final ProbabilityBag availableMaterialsBag = new ProbabilityBag();
+    private final ProbabilityBag availableBlocksToStandOnBag = new ProbabilityBag();
 
     public ItemGenerator() {
         recipes = new ArrayList<>();
@@ -86,7 +86,10 @@ public class ItemGenerator implements Listener {
                         .stream().map(ItemStack::getType);
             }).toList();
             availableMaterialsPerChunkKey.putAll(chunk.getChunkKey(), mobDrops);
-            availableMaterials.addAll(mobDrops);
+            // Weight mob drops more highly
+            for (int i = 0; i < 3; i++) {
+                availableMaterials.addAll(mobDrops);
+            }
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
                     int minHeight = (int) Math.max(chunk.getWorld().getMinHeight(), averageY - ((Math.pow(2, level - 1) + 10)));
@@ -132,22 +135,26 @@ public class ItemGenerator implements Listener {
                 ));
 
         for (Map.Entry<Material, Integer> entry : availableMaterialFrequencies.entrySet()) {
-            availableMaterialsBag.add(entry.getKey(), materialChunkOccurrences.getOrDefault(entry.getKey(), 0) * entry.getValue());
+            // Math.min is here as blocks in literally every chunk, but rare within each chunk were being overweighted previously
+            availableMaterialsBag.add(entry.getKey(), Math.min(15, materialChunkOccurrences.getOrDefault(entry.getKey(), 0)) * entry.getValue());
         }
 
         for (Map.Entry<Material, Integer> entry : availableBlocksFrequencies.entrySet()) {
-            availableBlocksToStandOnBag.add(entry.getKey(), materialChunkOccurrences.getOrDefault(entry.getKey(), 0) * entry.getValue());
+            // Math.min is here as blocks in literally every chunk, but rare within each chunk were being overweighted previously
+            availableBlocksToStandOnBag.add(entry.getKey(), Math.min(15, materialChunkOccurrences.getOrDefault(entry.getKey(), 0)) * entry.getValue());
         }
-        
-
 
         ProbabilityBag craftingBag = new ProbabilityBag().add(availableMaterialsBag);
-        for (int i = 0; i < level - 1; i++) {
+        // Cap of 8 BFS over Crafting for performance reasons and to limit increased weighting of crafting recipes from repeated adding
+        for (int i = 0; i < Math.min(level - 1, 8); i++) {
             for (Recipe recipe : recipes) {
                 List<Material> ingredients = switch (recipe) {
                     case ShapelessRecipe shapelessRecipe -> shapelessRecipe.getChoiceList().stream().flatMap((choice) -> {
                         if (choice instanceof RecipeChoice.MaterialChoice materialChoice) {
                             return materialChoice.getChoices().stream();
+                        }
+                        else if (choice instanceof RecipeChoice.ExactChoice exactChoice) {
+                            return exactChoice.getChoices().stream().map(ItemStack::getType);
                         }
                         return Stream.of();
                     }).toList();
@@ -155,11 +162,17 @@ public class ItemGenerator implements Listener {
                         if (choice instanceof RecipeChoice.MaterialChoice materialChoice) {
                             return materialChoice.getChoices().stream();
                         }
+                        else if (choice instanceof RecipeChoice.ExactChoice exactChoice) {
+                            return exactChoice.getChoices().stream().map(ItemStack::getType);
+                        }
                         return Stream.of();
                     }).toList();
                     case CookingRecipe cookingRecipe -> {
                         if (cookingRecipe.getInputChoice() instanceof RecipeChoice.MaterialChoice materialChoice) {
                             yield materialChoice.getChoices();
+                        }
+                        else if (cookingRecipe.getInputChoice() instanceof RecipeChoice.ExactChoice exactChoice) {
+                            yield  exactChoice.getChoices().stream().map(ItemStack::getType).toList();
                         }
                         else yield List.of();
                     }
@@ -167,13 +180,20 @@ public class ItemGenerator implements Listener {
                         if (stonecuttingRecipe.getInputChoice() instanceof RecipeChoice.MaterialChoice materialChoice) {
                             yield materialChoice.getChoices();
                         }
+                        else if (stonecuttingRecipe.getInputChoice() instanceof RecipeChoice.ExactChoice exactChoice) {
+                            yield  exactChoice.getChoices().stream().map(ItemStack::getType).toList();
+                        }
                         else yield List.of();
                     }
                     default -> List.of();
                 };
                 Map<Material, Integer> groupedMaterials = ingredients.stream().collect(Collectors.groupingBy(x -> x, Collectors.summingInt(x -> 1)));
                 if (craftingBag.containsAll(ingredients)) {
-                    Double p = groupedMaterials.entrySet().stream().map((it) -> craftingBag.get(it.getKey()) / it.getValue()).reduce(1D, (x1, x2) -> x1 * x2);
+                    Double p = groupedMaterials.keySet()
+                            .stream()
+                            .map(craftingBag::getWeighting)
+                            //.map((it) -> craftingBag.get(it.getKey()) / it.getValue())
+                            .reduce(1D, Math::min);
                     craftingBag.add(recipe.getResult().getType(), p);
                 }
             }

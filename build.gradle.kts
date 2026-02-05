@@ -49,7 +49,7 @@ tasks.shadowJar {
     minimize()
     configurations = listOf(project.configurations.shadow.get())
     val folder = System.getenv("pluginFolder")
-    destinationDirectory.set(file("F:\\Holder\\ShuffleServer\\plugins"))
+    destinationDirectory.set(file(folder))
 }
 
 sentry {
