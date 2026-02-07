@@ -29,7 +29,6 @@ public class Game {
     public void startGame() {
         level = 1;
         alivePlayers = Bukkit.getOnlinePlayers().stream().map(Player::getUniqueId).collect(HashSet::new, HashSet::add, HashSet::addAll);
-        Map<UUID, ProbabilityBag.SampleResult> samples = itemGenerator.generateMaterials(Bukkit.getOnlinePlayers().stream().toList(), 1);
         for (Player player : Bukkit.getOnlinePlayers()) {
             discoverRecipes(player);
             player.getInventory().clear();
@@ -45,12 +44,14 @@ public class Game {
                     z
                 )
             );
+            Map<UUID, ProbabilityBag.SampleResult> samples = itemGenerator.generateMaterials(Bukkit.getOnlinePlayers().stream().toList(), 1);
             ProbabilityBag.SampleResult sample = samples.get(player.getUniqueId());
             searchingFor.put(player.getUniqueId(), sample.material());
             player.sendMessage("You are searching for %s, p = %s".formatted(sample.material().name(), sample.weighting()));
         }
         roundStarted = Instant.now();
         roundEnds = roundStarted.plusSeconds(180);
+        level++;
         new BukkitRunnable() {
             @Override
             public void run() {

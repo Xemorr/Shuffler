@@ -50,6 +50,17 @@ public class ProbabilityBag {
         return this;
     }
 
+    public ProbabilityBag max(Material type, double weighting) {
+        Double currentWeight = bag.get(type);
+        if (currentWeight == null) {
+            return add(type, weighting);
+        }
+        weighting = Math.max(currentWeight, weighting);
+        bag.put(type, weighting);
+        totalWeighting += weighting - currentWeight;
+        return this;
+    }
+
     public ProbabilityBag add(ProbabilityBag bag) {
         for (Map.Entry<Material, Double> entry : bag.bag.entrySet()) {
             add(entry.getKey(), entry.getValue());
@@ -109,7 +120,9 @@ public class ProbabilityBag {
             }
         }
         
-        if (index == -1) throw new IllegalStateException("WEE WOO WEE WOO!");
+        if (index == -1) {
+            throw new IllegalStateException("WEE WOO WEE WOO!");
+        }
 
         return getSamplesAroundIndex(count, sortedBag, index);
     }

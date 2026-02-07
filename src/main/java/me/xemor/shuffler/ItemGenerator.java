@@ -136,69 +136,81 @@ public class ItemGenerator implements Listener {
 
         for (Map.Entry<Material, Integer> entry : availableMaterialFrequencies.entrySet()) {
             // Math.min is here as blocks in literally every chunk, but rare within each chunk were being overweighted previously
-            availableMaterialsBag.add(entry.getKey(), Math.min(15, materialChunkOccurrences.getOrDefault(entry.getKey(), 0)) * entry.getValue());
+            availableMaterialsBag.add(entry.getKey(), Math.min(20, materialChunkOccurrences.getOrDefault(entry.getKey(), 0)) * entry.getValue());
         }
 
         for (Map.Entry<Material, Integer> entry : availableBlocksFrequencies.entrySet()) {
             // Math.min is here as blocks in literally every chunk, but rare within each chunk were being overweighted previously
-            availableBlocksToStandOnBag.add(entry.getKey(), Math.min(15, materialChunkOccurrences.getOrDefault(entry.getKey(), 0)) * entry.getValue());
+            availableBlocksToStandOnBag.add(entry.getKey(), Math.min(20, materialChunkOccurrences.getOrDefault(entry.getKey(), 0)) * entry.getValue());
         }
 
         ProbabilityBag craftingBag = new ProbabilityBag().add(availableMaterialsBag);
         // Cap of 8 BFS over Crafting for performance reasons and to limit increased weighting of crafting recipes from repeated adding
         for (int i = 0; i < Math.min(level - 1, 8); i++) {
             for (Recipe recipe : recipes) {
-                List<Material> ingredients = switch (recipe) {
-                    case ShapelessRecipe shapelessRecipe -> shapelessRecipe.getChoiceList().stream().flatMap((choice) -> {
-                        if (choice instanceof RecipeChoice.MaterialChoice materialChoice) {
-                            return materialChoice.getChoices().stream();
+                for (int j = 0; j < 3; j++) {
+                    List<Material> ingredients = switch (recipe) {
+                        case ShapelessRecipe shapelessRecipe ->
+                                shapelessRecipe.getChoiceList().stream().filter(Objects::nonNull).map((choice) -> {
+                                    List<Material> materials = (switch (choice) {
+                                        case RecipeChoice.MaterialChoice materialChoice ->
+                                                materialChoice.getChoices().stream().toList();
+                                        case RecipeChoice.ExactChoice exactChoice ->
+                                                exactChoice.getChoices().stream().map(ItemStack::getType).toList();
+                                        default -> List.of();
+                                    });
+                                    return materials.get(ThreadLocalRandom.current().nextInt(materials.size()));
+                                }).toList();
+                        case ShapedRecipe shapedRecipe ->
+                                shapedRecipe.getChoiceMap().values().stream().filter(Objects::nonNull).map((choice) -> {
+                                    List<Material> materials = (switch (choice) {
+                                        case RecipeChoice.MaterialChoice materialChoice ->
+                                                materialChoice.getChoices().stream().toList();
+                                        case RecipeChoice.ExactChoice exactChoice ->
+                                                exactChoice.getChoices().stream().map(ItemStack::getType).toList();
+                                        default -> List.of();
+                                    });
+                                    return materials.get(ThreadLocalRandom.current().nextInt(materials.size()));
+                                }).toList();
+                        case CookingRecipe cookingRecipe -> {
+                            RecipeChoice inputChoice = cookingRecipe.getInputChoice();
+                            if (inputChoice == null) yield List.of();
+                            List<Material> materials = switch (inputChoice) {
+                                case RecipeChoice.MaterialChoice materialChoice ->
+                                        materialChoice.getChoices().stream().toList();
+                                case RecipeChoice.ExactChoice exactChoice ->
+                                        exactChoice.getChoices().stream().map(ItemStack::getType).toList();
+                                default -> List.of();
+                            };
+                            yield List.of(materials.get(ThreadLocalRandom.current().nextInt(materials.size())));
                         }
-                        else if (choice instanceof RecipeChoice.ExactChoice exactChoice) {
-                            return exactChoice.getChoices().stream().map(ItemStack::getType);
+                        case StonecuttingRecipe stonecuttingRecipe -> {
+                            RecipeChoice inputChoice = stonecuttingRecipe.getInputChoice();
+                            if (inputChoice == null) yield List.of();
+                            List<Material> materials = switch (inputChoice) {
+                                case RecipeChoice.MaterialChoice materialChoice ->
+                                        materialChoice.getChoices().stream().toList();
+                                case RecipeChoice.ExactChoice exactChoice ->
+                                        exactChoice.getChoices().stream().map(ItemStack::getType).toList();
+                                default -> List.of();
+                            };
+                            yield List.of(materials.get(ThreadLocalRandom.current().nextInt(materials.size())));
                         }
-                        return Stream.of();
-                    }).toList();
-                    case ShapedRecipe shapedRecipe -> shapedRecipe.getChoiceMap().values().stream().flatMap((choice) -> {
-                        if (choice instanceof RecipeChoice.MaterialChoice materialChoice) {
-                            return materialChoice.getChoices().stream();
-                        }
-                        else if (choice instanceof RecipeChoice.ExactChoice exactChoice) {
-                            return exactChoice.getChoices().stream().map(ItemStack::getType);
-                        }
-                        return Stream.of();
-                    }).toList();
-                    case CookingRecipe cookingRecipe -> {
-                        if (cookingRecipe.getInputChoice() instanceof RecipeChoice.MaterialChoice materialChoice) {
-                            yield materialChoice.getChoices();
-                        }
-                        else if (cookingRecipe.getInputChoice() instanceof RecipeChoice.ExactChoice exactChoice) {
-                            yield  exactChoice.getChoices().stream().map(ItemStack::getType).toList();
-                        }
-                        else yield List.of();
+                        default -> List.of();
+                    };
+                    Map<Material, Integer> groupedMaterials = ingredients.stream().collect(Collectors.groupingBy(x -> x, Collectors.summingInt(x -> 1)));
+                    if (craftingBag.containsAll(ingredients)) {
+                        Double p = groupedMaterials.keySet()
+                                .stream()
+                                .map(craftingBag::getWeighting)
+                                //.map((it) -> craftingBag.get(it.getKey()) / it.getValue())
+                                .reduce(Double.MAX_VALUE, Math::min);
+                        if (p == Double.MAX_VALUE) p = 0D;
+                        craftingBag.max(recipe.getResult().getType(), p);
                     }
-                    case StonecuttingRecipe stonecuttingRecipe -> {
-                        if (stonecuttingRecipe.getInputChoice() instanceof RecipeChoice.MaterialChoice materialChoice) {
-                            yield materialChoice.getChoices();
-                        }
-                        else if (stonecuttingRecipe.getInputChoice() instanceof RecipeChoice.ExactChoice exactChoice) {
-                            yield  exactChoice.getChoices().stream().map(ItemStack::getType).toList();
-                        }
-                        else yield List.of();
-                    }
-                    default -> List.of();
-                };
-                Map<Material, Integer> groupedMaterials = ingredients.stream().collect(Collectors.groupingBy(x -> x, Collectors.summingInt(x -> 1)));
-                if (craftingBag.containsAll(ingredients)) {
-                    Double p = groupedMaterials.keySet()
-                            .stream()
-                            .map(craftingBag::getWeighting)
-                            //.map((it) -> craftingBag.get(it.getKey()) / it.getValue())
-                            .reduce(1D, Math::min);
-                    craftingBag.add(recipe.getResult().getType(), p);
                 }
             }
         }
-
         return craftingBag.add(availableBlocksToStandOnBag);
     }
 
