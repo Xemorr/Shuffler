@@ -13,6 +13,7 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 
 import static org.bukkit.Bukkit.getServer;
@@ -29,6 +30,7 @@ public class Game {
     public void startGame() {
         level = 1;
         alivePlayers = Bukkit.getOnlinePlayers().stream().map(Player::getUniqueId).collect(HashSet::new, HashSet::add, HashSet::addAll);
+        List<CompletableFuture<Boolean>> futures = new ArrayList<>();
         for (Player player : Bukkit.getOnlinePlayers()) {
             discoverRecipes(player);
             player.getInventory().clear();
@@ -36,28 +38,41 @@ public class Game {
             player.getInventory().addItem(new ItemStack(Material.TORCH, 64));
             int x = ThreadLocalRandom.current().nextInt(300) - 150;
             int z = ThreadLocalRandom.current().nextInt(300) - 150;
-            player.teleport(
-                new Location(
-                    player.getWorld(),
-                    x,
-                    player.getWorld().getHighestBlockYAt(x, z),
-                    z
-                )
-            );
-            Map<UUID, ProbabilityBag.SampleResult> samples = itemGenerator.generateMaterials(Bukkit.getOnlinePlayers().stream().toList(), 1);
-            ProbabilityBag.SampleResult sample = samples.get(player.getUniqueId());
-            searchingFor.put(player.getUniqueId(), sample.material());
-            player.sendMessage("You are searching for %s, p = %s".formatted(sample.material().name(), sample.weighting()));
+            futures.add(player.teleportAsync(
+                    new Location(
+                            player.getWorld(),
+                            x,
+                            player.getWorld().getHighestBlockYAt(x, z),
+                            z
+                    )
+            ));
         }
-        roundStarted = Instant.now();
-        roundEnds = roundStarted.plusSeconds(180);
-        level++;
         new BukkitRunnable() {
             @Override
             public void run() {
-                tick();
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        for (Player player : Bukkit.getOnlinePlayers()) {
+                            Map<UUID, ProbabilityBag.SampleResult> samples = itemGenerator.generateMaterials(Bukkit.getOnlinePlayers().stream().toList(), 1);
+                            ProbabilityBag.SampleResult sample = samples.get(player.getUniqueId());
+                            searchingFor.put(player.getUniqueId(), sample.material());
+                            player.sendMessage("You are searching for %s, p = %s".formatted(sample.material().name(), sample.weighting()));
+                        }
+                        roundStarted = Instant.now();
+                        roundEnds = roundStarted.plusSeconds(180);
+                        level++;
+                        new BukkitRunnable() {
+                            @Override
+                            public void run() {
+                                tick();
+                            }
+                        }.runTaskTimer(Shuffler.getPlugin(Shuffler.class), 0, 1);
+                    }
+                }.runTask(Shuffler.getPlugin(Shuffler.class));
             }
-        }.runTaskTimer(Shuffler.getPlugin(Shuffler.class), 0, 1);
+        }.runTaskAsynchronously(Shuffler.getPlugin(Shuffler.class));
     }
 
     public Material searchingFor(Player player) {

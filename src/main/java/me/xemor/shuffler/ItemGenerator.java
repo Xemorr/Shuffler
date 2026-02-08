@@ -153,8 +153,9 @@ public class ItemGenerator implements Listener {
                         case ShapelessRecipe shapelessRecipe ->
                                 shapelessRecipe.getChoiceList().stream().filter(Objects::nonNull).map((choice) -> {
                                     List<Material> materials = (switch (choice) {
-                                        case RecipeChoice.MaterialChoice materialChoice ->
-                                                materialChoice.getChoices().stream().toList();
+                                        case RecipeChoice.MaterialChoice materialChoice -> {
+                                            yield materialChoice.getChoices().stream().toList();
+                                        }
                                         case RecipeChoice.ExactChoice exactChoice ->
                                                 exactChoice.getChoices().stream().map(ItemStack::getType).toList();
                                         default -> List.of();
@@ -206,7 +207,7 @@ public class ItemGenerator implements Listener {
                                 //.map((it) -> craftingBag.get(it.getKey()) / it.getValue())
                                 .reduce(Double.MAX_VALUE, Math::min);
                         if (p == Double.MAX_VALUE) p = 0D;
-                        craftingBag.max(recipe.getResult().getType(), p);
+                        craftingBag.add(recipe.getResult().getType(), p);
                     }
                 }
             }
