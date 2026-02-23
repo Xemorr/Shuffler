@@ -1,5 +1,5 @@
 group = "me.xemor"
-version = "1.1"
+version = "1.2"
 description = "shuffler"
 java.sourceCompatibility = JavaVersion.VERSION_21
 java.targetCompatibility = JavaVersion.VERSION_21

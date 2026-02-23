@@ -17,15 +17,15 @@ public class ProbabilityBag {
         return entries(totalWeighting);
     }
 
-    private List<Entry> entries(double weightingCap) {
+    public List<Entry> entries(double weightingCap) {
         List<Entry> intermediary = bag.entrySet().stream().map((it) -> new Entry(it.getKey(), it.getValue() / totalWeighting))
-                .filter((it) -> it.weighting < weightingCap).toList();
-        double sum = intermediary.stream().mapToDouble(Entry::weighting).sum();
-        return intermediary.stream().map((it) -> new Entry(it.material, it.weighting / sum)).toList();
+                .filter((it) -> it.probability < weightingCap).toList();
+        double sum = intermediary.stream().mapToDouble(Entry::probability).sum();
+        return intermediary.stream().map((it) -> new Entry(it.material, it.probability / sum)).toList();
     }
 
-    public void add(Material type) {
-        add(type, 1);
+    public void addWeighting(Material type) {
+        addWeighting(type, 1);
     }
 
     public double get(Material type) {
@@ -44,16 +44,16 @@ public class ProbabilityBag {
         return bag.keySet().containsAll(types);
     }
 
-    public ProbabilityBag add(Material type, double weighting) {
+    public ProbabilityBag addWeighting(Material type, double weighting) {
         bag.put(type, bag.getOrDefault(type, 0D) + weighting);
         totalWeighting += weighting;
         return this;
     }
 
-    public ProbabilityBag max(Material type, double weighting) {
+    public ProbabilityBag maxWeighting(Material type, double weighting) {
         Double currentWeight = bag.get(type);
         if (currentWeight == null) {
-            return add(type, weighting);
+            return addWeighting(type, weighting);
         }
         weighting = Math.max(currentWeight, weighting);
         bag.put(type, weighting);
@@ -61,35 +61,35 @@ public class ProbabilityBag {
         return this;
     }
 
-    public ProbabilityBag add(ProbabilityBag bag) {
+    public ProbabilityBag addWeighting(ProbabilityBag bag) {
         for (Map.Entry<Material, Double> entry : bag.bag.entrySet()) {
-            add(entry.getKey(), entry.getValue());
+            addWeighting(entry.getKey(), entry.getValue());
         }
         return this;
     }
 
-    public ProbabilityBag add(Collection<Material> types) {
+    public ProbabilityBag addWeighting(Collection<Material> types) {
         for (Material type : types) {
-            add(type);
+            addWeighting(type);
         }
         return this;
     }
 
     public SampleResult sample(double weightingCap) {
         List<Entry> sortedBag = entries(weightingCap).stream().sorted((it1, it2) -> {
-            if (it1.weighting() == it2.weighting()) {
+            if (it1.probability() == it2.probability()) {
                 return 0;
             }
-            return it1.weighting() > it2.weighting() ? 1 : -1;
+            return it1.probability() > it2.probability() ? 1 : -1;
         }).toList();
         double p = ThreadLocalRandom.current().nextDouble(1.0);
         for (Entry entry : sortedBag) {
             if (p <= 0) {
-                return new SampleResult(entry.material(), entry.weighting());
+                return new SampleResult(entry.material(), entry.probability());
             }
-            p -= entry.weighting();
+            p -= entry.probability();
             if (p <= 0) {
-                return new SampleResult(entry.material(), entry.weighting());
+                return new SampleResult(entry.material(), entry.probability());
             }
         }
         throw new IllegalStateException("WEE WOO WEE WOO!");
@@ -98,10 +98,10 @@ public class ProbabilityBag {
     public List<SampleResult> samples(int count, double weightingCap) {
         List<Entry> sortedBag = entries(weightingCap).stream()
                 .sorted((it1, it2) -> {
-                    if (it1.weighting() == it2.weighting()) {
+                    if (it1.probability() == it2.probability()) {
                         return 0;
                     }
-                    return it1.weighting() > it2.weighting() ? 1 : -1;
+                    return it1.probability() > it2.probability() ? 1 : -1;
                 }).toList();
 
         double p = ThreadLocalRandom.current().nextDouble(1.0);
@@ -113,7 +113,7 @@ public class ProbabilityBag {
                 index = i;
                 break;
             }
-            p -= entry.weighting;
+            p -= entry.probability;
             if (p <= 0) {
                 index = i;
                 break;
@@ -129,15 +129,15 @@ public class ProbabilityBag {
 
     private static @NotNull List<SampleResult> getSamplesAroundIndex(int count, List<Entry> sortedBag, int index) {
         List<SampleResult> results = new ArrayList<>();
-        results.add(new SampleResult(sortedBag.get(index).material, sortedBag.get(index).weighting));
+        results.add(new SampleResult(sortedBag.get(index).material, sortedBag.get(index).probability));
         int leftPointer = index - 1;
         int rightPointer = index + 1;
         for (int i = 1; i < count && results.size() < count; i++) {
             if (i % 2 == 1 && rightPointer < sortedBag.size()) {
-                results.add(new SampleResult(sortedBag.get(rightPointer).material(), sortedBag.get(rightPointer).weighting()));
+                results.add(new SampleResult(sortedBag.get(rightPointer).material(), sortedBag.get(rightPointer).probability()));
                 rightPointer++;
             } else if (leftPointer >= 0) {
-                results.add(new SampleResult(sortedBag.get(leftPointer).material(), sortedBag.get(leftPointer).weighting()));
+                results.add(new SampleResult(sortedBag.get(leftPointer).material(), sortedBag.get(leftPointer).probability()));
                 leftPointer--;
             }
         }
@@ -145,6 +145,6 @@ public class ProbabilityBag {
     }
 
     public record SampleResult(Material material, double weighting) {}
-    public record Entry(Material material, double weighting) {}
+    public record Entry(Material material, double probability) {}
 
 }
