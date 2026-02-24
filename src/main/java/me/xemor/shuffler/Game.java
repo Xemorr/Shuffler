@@ -5,6 +5,9 @@ import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.ShapedRecipe;
@@ -20,15 +23,19 @@ import static org.bukkit.Bukkit.getServer;
 
 public class Game {
 
+    private final List<CompletableFuture<Void>> futuresWaitingOn = new ArrayList<>();
     private Map<UUID, Material> searchingFor = new HashMap<>();
     private Set<UUID> alivePlayers = new HashSet<>();
     private int level = 1;
     private ItemGenerator itemGenerator = new ItemGenerator();
     private Instant roundStarted;
     private Instant roundEnds;
+    private BossBar bossBar;
 
     public void startGame() {
         level = 1;
+        bossBar = Bukkit.createBossBar("Game Starting...", BarColor.WHITE, BarStyle.SOLID);
+        Bukkit.getOnlinePlayers().forEach(bossBar::addPlayer);
         alivePlayers = Bukkit.getOnlinePlayers().stream().map(Player::getUniqueId).collect(HashSet::new, HashSet::add, HashSet::addAll);
         List<CompletableFuture<Boolean>> futures = new ArrayList<>();
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -55,14 +62,24 @@ public class Game {
                     @Override
                     public void run() {
                         for (Player player : Bukkit.getOnlinePlayers()) {
-                            Map<UUID, ProbabilityBag.SampleResult> samples = itemGenerator.generateMaterials(Bukkit.getOnlinePlayers().stream().toList(), 1);
-                            ProbabilityBag.SampleResult sample = samples.get(player.getUniqueId());
-                            searchingFor.put(player.getUniqueId(), sample.material());
-                            player.sendMessage("You are searching for %s, p = %s".formatted(sample.material().name(), sample.weighting()));
+                            Map<UUID, ProbabilityBag> bags = itemGenerator.generateLevelOneBags(Bukkit.getOnlinePlayers());
+                            ProbabilityBag bag = bags.get(player.getUniqueId());
+                            ProbabilityBag.SampleResult sample = bag.sample(1);
+                            futuresWaitingOn.add(new SlotMachineAnimation(Shuffler.getPlugin(Shuffler.class))
+                                    .playAnimation(
+                                            player,
+                                            bag.getSamplesAroundItem(sample.material(), 20, 1D),
+                                            sample.material(),
+                                            180
+                                    ).thenAccept((it) -> {
+                                        searchingFor.put(player.getUniqueId(), sample.material());
+                                        player.sendMessage("You are searching for %s, p = %s".formatted(sample.material().name(), sample.weighting()));
+                                        roundStarted = Instant.now();
+                                        roundEnds = roundStarted.plusSeconds(180);
+                                    }));
+                            roundStarted = Instant.now();
+                            roundEnds = roundStarted.plusSeconds(180);
                         }
-                        roundStarted = Instant.now();
-                        roundEnds = roundStarted.plusSeconds(180);
-                        level++;
                         new BukkitRunnable() {
                             @Override
                             public void run() {
@@ -96,47 +113,73 @@ public class Game {
                 player.setGameMode(GameMode.SPECTATOR);
             }
         }
-        if (timeRemainingInSeconds <= 0 || searchingFor.isEmpty()) {
+        boolean notDuringAnimation = futuresWaitingOn.stream().allMatch(CompletableFuture::isDone);
+        if (!notDuringAnimation) return;
+        if ((timeRemainingInSeconds <= 0 || searchingFor.isEmpty())) {
+            level++;
+            futuresWaitingOn.clear();
             if (alivePlayers.containsAll(searchingFor.keySet()) && searchingFor.keySet().containsAll(alivePlayers)) {
                 roundEnds = Instant.now().plusSeconds(30);
             }
             else {
                 alivePlayers.removeAll(searchingFor.keySet());
+                bossBar.setTitle("Shuffling!");
+                bossBar.setProgress(1.0);
                 searchingFor = searchingFor.entrySet().stream().filter((entry) -> alivePlayers.contains(entry.getKey())).collect(HashMap::new, (map, entry) -> map.put(entry.getKey(), entry.getValue()), HashMap::putAll);
-                Map<UUID, ProbabilityBag.SampleResult> uuidToSample = itemGenerator.generateMaterials(alivePlayers.stream().map(Bukkit::getPlayer).filter((Objects::nonNull)).toList(), level);
-                for (UUID playerUUID : alivePlayers) {
-                    Player player = Bukkit.getPlayer(playerUUID);
+                ProbabilityBag bag = itemGenerator.getBagForPlayers(alivePlayers.stream().map(Bukkit::getPlayer).filter(Objects::nonNull).toList(), level);
+                double weightingCap = Math.pow(1 / 3D, level - 1);
+                List<ProbabilityBag.SampleResult> samples = bag.samples(alivePlayers.size(), weightingCap);
+                Iterator<UUID> iterator = alivePlayers.iterator();
+                for (int i = 0; i < alivePlayers.size(); i++) {
+                    Player player = Bukkit.getPlayer(iterator.next());
                     if (player == null) continue;
-                    ProbabilityBag.SampleResult sample = uuidToSample.get(playerUUID);
-                    searchingFor.put(player.getUniqueId(), sample.material());
-                    player.sendMessage("You are searching for %s, p = %s".formatted(sample.material().name(), sample.weighting()));
-                }
-                level++;
-                roundStarted = Instant.now();
-                roundEnds = roundStarted.plusSeconds(180 + Math.min(120, (level - 1) * 60));
-            }
-        }
-        for (UUID playerUUID : alivePlayers) {
-            Player player = Bukkit.getPlayer(playerUUID);
-            if (player == null) continue;
-            Material material = searchingFor.get(player.getUniqueId());
-            boolean matched = Arrays.stream(player.getInventory().getContents()).anyMatch((item) -> {
-                if (item == null) return false;
-                return item.getType() == material;
-            });
-            if (player.getLocation().subtract(0, 1, 0).getBlock().getType() == material || matched) {
-                searchingFor.remove(player.getUniqueId());
-                for (Player player1 : Bukkit.getOnlinePlayers()) {
-                    player1.sendMessage("%s has found %s".formatted(player.getName(), material));
+                    ProbabilityBag.SampleResult sample = samples.get(i);
+                    futuresWaitingOn.add(new SlotMachineAnimation(Shuffler.getPlugin(Shuffler.class))
+                            .playAnimation(
+                                player,
+                                bag.getSamplesAroundItem(sample.material(), 20, weightingCap),
+                                sample.material(),
+                                180
+                            ).thenAccept((it) -> {
+                                searchingFor.put(player.getUniqueId(), sample.material());
+                                player.sendMessage("You are searching for %s, p = %s".formatted(sample.material().name(), sample.weighting()));
+                                roundStarted = Instant.now();
+                                roundEnds = roundStarted.plusSeconds(getMaximumTimeAllotted());
+                            }));
                 }
             }
-            if (material == null) {
-                player.sendActionBar(Component.text("(%s players left) You have found the item! Time remaining, %s seconds".formatted(alivePlayers.size(), timeRemainingInSeconds)));
-            }
-            else {
-                player.sendActionBar(Component.text("(%s player left) Searching for %s! Time remaining, %s seconds".formatted(alivePlayers.size(), material.name(), timeRemainingInSeconds)));
+        }
+        else {
+            bossBar.setProgress((double) timeRemainingInSeconds / getMaximumTimeAllotted());
+            bossBar.setTitle("Round %s. Time Remaining: %s".formatted(level, timeRemainingInSeconds));
+            for (UUID playerUUID : alivePlayers) {
+                Player player = Bukkit.getPlayer(playerUUID);
+                if (player == null) continue;
+                Material material = searchingFor.get(player.getUniqueId());
+                boolean matched = Arrays.stream(player.getInventory().getContents()).anyMatch((item) -> {
+                    if (item == null) return false;
+                    return item.getType() == material;
+                });
+                if (player.getLocation().subtract(0, 1, 0).getBlock().getType() == material
+                        || player.getLocation().getBlock().getType() == material
+                        || matched) {
+                    searchingFor.remove(player.getUniqueId());
+                    for (Player player1 : Bukkit.getOnlinePlayers()) {
+                        player1.sendMessage("%s has found %s".formatted(player.getName(), material));
+                    }
+                }
+                if (material == null) {
+                    player.sendActionBar(Component.text("(%s players left) You have found the item!".formatted(alivePlayers.size())));
+                }
+                else {
+                    player.sendActionBar(Component.text("(%s player left) Searching for %s!".formatted(alivePlayers.size(), material.name())));
+                }
             }
         }
+    }
+
+    private int getMaximumTimeAllotted() {
+        return 180 + Math.min(120, (level - 1) * 60);
     }
 
 }

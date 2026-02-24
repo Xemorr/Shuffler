@@ -11,7 +11,6 @@ import org.bukkit.event.Listener;
 import org.bukkit.inventory.*;
 import org.bukkit.loot.LootContext;
 import org.bukkit.loot.LootTables;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
@@ -261,31 +260,16 @@ public class ItemGenerator implements Listener {
         ).toList();
     }
 
-    public Map<UUID, ProbabilityBag.SampleResult> generateMaterials(List<? extends Player> alivePlayers, int level) {
-        Map<UUID, ProbabilityBag.SampleResult> sampleResults = new HashMap<>();
-        if (level == 1) {
-            for (Player player : alivePlayers) {
-                ProbabilityBag bag = getLevelOneBagForPlayer(player);
-                ProbabilityBag.SampleResult sample = bag.sample(1 / 2D);
-                sampleResults.put(player.getUniqueId(), sample);
-            }
-        }
-        else {
-            ProbabilityBag bag = getBagForPlayers(alivePlayers, level);
-            List<ProbabilityBag.SampleResult> samples = bag.samples(alivePlayers.size(), Math.pow(1 / 2D, level));
-            int i = 0;
-            for (Player player : alivePlayers) {
-                sampleResults.put(player.getUniqueId(), samples.get(i++));
-                player.sendMessage(bag.entries(Math.pow(1 / 2D, level))
-                        .stream()
-                        .sorted((it1, it2) -> -Double.compare(it1.probability(), it2.probability()))
-                        .limit(20)
-                        .map((it) -> "{%s, %s}".formatted(it.material().name(), it.probability()))
-                .collect(Collectors.joining(", ")));
-            }
+    public Map<UUID, ProbabilityBag> generateLevelOneBags(Collection<? extends Player> alivePlayers) {
+        Map<UUID, ProbabilityBag> sampleResults = new HashMap<>();
+        for (Player player : alivePlayers) {
+            ProbabilityBag bag = getLevelOneBagForPlayer(player);
+            sampleResults.put(player.getUniqueId(), bag);
         }
         return sampleResults;
     }
+
+    public record GenerationResult(Map<UUID, ProbabilityBag.SampleResult> sampleResults, List<Material> possibleMaterials) {}
 
     private ProbabilityBag getLevelOneBagForPlayer(Player player) {
         World world = player.getWorld();
@@ -305,7 +289,7 @@ public class ItemGenerator implements Listener {
         return bag;
     }
 
-    private ProbabilityBag getBagForPlayers(List<? extends Player> alivePlayers, int level) {
+    public ProbabilityBag getBagForPlayers(Collection<? extends Player> alivePlayers, int level) {
         if (alivePlayers.isEmpty()) throw new IllegalArgumentException("Alive players must contain at least one player");
         Set<String> worldNames = alivePlayers.stream().map(Entity::getWorld).map(World::getName).collect(Collectors.toSet());
         List<Chunk> chunks = worldNames.stream().map(Bukkit::getWorld).filter(Objects::nonNull).flatMap((world) -> Arrays.stream(world.getLoadedChunks()))
@@ -324,7 +308,7 @@ public class ItemGenerator implements Listener {
                 if (entity.getY() > minHeight) {
                     LootTables lootTables = Registry.LOOT_TABLES.get(NamespacedKey.minecraft("entities/" + entity.getType().getKey().getKey().toLowerCase()));
                     if (lootTables == null) return Stream.of();
-                    return lootTables.getLootTable().populateLoot(ThreadLocalRandom.current(), (new LootContext.Builder(entity.getLocation()).lootedEntity(entity).killer(alivePlayers.getFirst())).build())
+                    return lootTables.getLootTable().populateLoot(ThreadLocalRandom.current(), (new LootContext.Builder(entity.getLocation()).lootedEntity(entity).killer(alivePlayers.iterator().next())).build())
                             .stream().map(ItemStack::getType);
                 }
                 return Stream.of();
@@ -332,7 +316,7 @@ public class ItemGenerator implements Listener {
             availableMaterialsPerChunkKey.putAll(chunk.getChunkKey(), mobDrops);
             for (Material mobDrop : mobDrops) {
                 // Weight mob drops much more highly
-                availableMaterials.put(mobDrop, availableMaterials.getOrDefault(mobDrop, 0) + 200000);
+                availableMaterials.put(mobDrop, availableMaterials.getOrDefault(mobDrop, 0) + 150000);
             }
         }
 

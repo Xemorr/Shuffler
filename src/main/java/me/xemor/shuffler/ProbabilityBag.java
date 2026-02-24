@@ -124,20 +124,33 @@ public class ProbabilityBag {
             throw new IllegalStateException("WEE WOO WEE WOO!");
         }
 
-        return getSamplesAroundIndex(count, sortedBag, index);
+        return getSamplesAroundIndex(count, sortedBag, index).stream().map((it) -> new SampleResult(it.material(), it.probability())).toList();
     }
 
-    private static @NotNull List<SampleResult> getSamplesAroundIndex(int count, List<Entry> sortedBag, int index) {
-        List<SampleResult> results = new ArrayList<>();
-        results.add(new SampleResult(sortedBag.get(index).material, sortedBag.get(index).probability));
+    public List<Material> getSamplesAroundItem(Material material, int samples, double weightingCap) {
+        List<Material> sortedBag = entries(weightingCap).stream()
+                .sorted((it1, it2) -> {
+                    if (it1.probability() == it2.probability()) {
+                        return 0;
+                    }
+                    return it1.probability() > it2.probability() ? 1 : -1;
+                }).map(Entry::material).toList();
+        int i = sortedBag.indexOf(material);
+        if (i == -1) throw new IllegalArgumentException("Material not found in bag!");
+        return getSamplesAroundIndex(samples, sortedBag, i);
+    }
+
+    private static <T> @NotNull List<T> getSamplesAroundIndex(int count, List<T> sortedBag, int index) {
+        List<T> results = new ArrayList<>();
+        results.add(sortedBag.get(index));
         int leftPointer = index - 1;
         int rightPointer = index + 1;
         for (int i = 1; i < count && results.size() < count; i++) {
             if (i % 2 == 1 && rightPointer < sortedBag.size()) {
-                results.add(new SampleResult(sortedBag.get(rightPointer).material(), sortedBag.get(rightPointer).probability()));
+                results.add(sortedBag.get(rightPointer));
                 rightPointer++;
             } else if (leftPointer >= 0) {
-                results.add(new SampleResult(sortedBag.get(leftPointer).material(), sortedBag.get(leftPointer).probability()));
+                results.add(sortedBag.get(leftPointer));
                 leftPointer--;
             }
         }
