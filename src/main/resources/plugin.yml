@@ -1,5 +1,0 @@
-name: Shuffler
-version: '1.0-SNAPSHOT'
-main: me.xemor.shuffler.Shuffler
-api-version: '1.21'
-authors: [ Xemor_ ]

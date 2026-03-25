@@ -1,0 +1,4 @@
+type: h2
+url: jdbc:postgresql://localhost:5432/block-shuffle
+username: postgres
+password: mysecret
