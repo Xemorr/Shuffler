@@ -1,10 +1,11 @@
-package me.xemor.shuffler;
+package me.xemor.shuffler.game;
 
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
 import org.bukkit.*;
 import org.bukkit.block.Block;
+import org.bukkit.entity.Ageable;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Listener;
@@ -45,36 +46,6 @@ public class ItemGenerator implements Listener {
     enum RecipeType {
         CRAFTING, COOKING, STONECUTTING
     }
-
-    /*
-    private List<ItemNode> topologicallySortedItemNodes() {
-        List<RecipeNode> nodes = unorderedRecipeNodes();
-        Deque<ItemNode> unvisitedNodes = Arrays.stream(Material.values()).map(WorldNode::new).collect(Collectors.toCollection(ArrayDeque::new));
-        List<ItemNode> sortedNodes = new ArrayList<>();
-
-        while (!unvisitedNodes.isEmpty()) {
-            ItemNode node = unvisitedNodes.pop();
-            sortedNodes.add(node);
-            for (RecipeNode child : nodes) {
-                int i = child.ingredients().indexOf(node.material());
-                if (i != -1) {
-                    child.ingredients().remove(i);
-                    if (child.ingredients().isEmpty()) {
-                        unvisitedNodes.push(child);
-                    }
-                }
-            }
-        }
-
-        int edgesCount = nodes.stream().map((it) -> it.ingredients().size()).reduce(Integer::sum).orElse(0);
-        if (edgesCount > 0) {
-            throw new IllegalStateException("Recipes do not form a DAG");
-        }
-        else {
-            return sortedNodes;
-        }
-    }
-     */
 
     // Replace the craftingBag generation in getBagForPlayers with this LBP approach:
     private ProbabilityBag runLoopyBeliefCraftingPropagation(ProbabilityBag rootBag, int iterations) {
@@ -306,6 +277,7 @@ public class ItemGenerator implements Listener {
             int minHeight = (int) Math.max(chunk.getWorld().getMinHeight(), averageY - ((Math.pow(2, level - 1) + 10)));
             List<Material> mobDrops = Arrays.stream(chunk.getEntities()).flatMap((entity) -> {
                 if (entity.getY() > minHeight) {
+                    if (entity instanceof Ageable ageable && !ageable.isAdult()) return Stream.of();
                     LootTables lootTables = Registry.LOOT_TABLES.get(NamespacedKey.minecraft("entities/" + entity.getType().getKey().getKey().toLowerCase()));
                     if (lootTables == null) return Stream.of();
                     return lootTables.getLootTable().populateLoot(ThreadLocalRandom.current(), (new LootContext.Builder(entity.getLocation()).lootedEntity(entity).killer(alivePlayers.iterator().next())).build())
@@ -316,7 +288,7 @@ public class ItemGenerator implements Listener {
             availableMaterialsPerChunkKey.putAll(chunk.getChunkKey(), mobDrops);
             for (Material mobDrop : mobDrops) {
                 // Weight mob drops much more highly
-                availableMaterials.put(mobDrop, availableMaterials.getOrDefault(mobDrop, 0) + 150000);
+                availableMaterials.put(mobDrop, availableMaterials.getOrDefault(mobDrop, 0) + 120000);
             }
         }
 

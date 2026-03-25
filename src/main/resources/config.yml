@@ -1,0 +1,15 @@
+automating:
+  stopServerOnGameEnd: false
+  cloudnet:
+    markAsInGame: false
+  autostart:
+    enabled: false
+    minPlayers: 2
+    secondsUntilStart: 300
+    speedupPerPlayer: 0
+  commandsOnStart:
+    - "time set day"
+  # effect give <player>...
+  commandsPerPlayerOnStart: []
+game:
+  world: "world"

@@ -1,0 +1,12 @@
+name: Shuffler
+version: ${version}
+main: me.xemor.shuffler.Shuffler
+api-version: '1.21.10'
+description: Adds block shuffle to your server.
+loader: me.xemor.shuffler.DependencyLoader
+dependencies:
+  server:
+    CloudNet-Bridge:
+      load: BEFORE
+      required: false
+      join-classpath: true

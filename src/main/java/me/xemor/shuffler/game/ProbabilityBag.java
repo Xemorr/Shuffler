@@ -1,4 +1,4 @@
-package me.xemor.shuffler;
+package me.xemor.shuffler.game;
 
 import org.bukkit.Material;
 import org.jetbrains.annotations.NotNull;
@@ -19,7 +19,7 @@ public class ProbabilityBag {
 
     public List<Entry> entries(double weightingCap) {
         List<Entry> intermediary = bag.entrySet().stream().map((it) -> new Entry(it.getKey(), it.getValue() / totalWeighting))
-                .filter((it) -> it.probability < weightingCap).toList();
+                .filter((it) -> it.probability <= weightingCap).toList();
         double sum = intermediary.stream().mapToDouble(Entry::probability).sum();
         return intermediary.stream().map((it) -> new Entry(it.material, it.probability / sum)).toList();
     }

@@ -1,4 +1,4 @@
-package me.xemor.shuffler;
+package me.xemor.shuffler.game;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -11,20 +11,18 @@ import revxrsal.commands.bukkit.actor.BukkitCommandActor;
 @Command("game")
 public class GameCommand {
 
-    private final Game game = new Game();
-
     @Subcommand("start")
     public void startGame() {
         for (Player player : Bukkit.getOnlinePlayers()) {
             player.sendMessage(ChatColor.RED + "GAME STARTING");
         }
-        game.startGame();
+        Game.getInstance().startGame();
     }
 
     @Subcommand("check")
     public void check(BukkitCommandActor actor, Player player) {
-        Material material = game.searchingFor(player);
-        actor.sendRawError("%s is searching for %s".formatted(player.getName(), material == null ? "Nothing" : material.name()));
+        Material material = Game.getInstance().searchingFor(player);
+        actor.sendRawMessage("%s is searching for %s".formatted(player.getName(), material == null ? "Nothing" : material.name()));
     }
 
 }
