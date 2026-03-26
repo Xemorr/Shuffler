@@ -1,0 +1,13 @@
+ranks:
+  - name: "grandwarden"
+    threshold: 36 # top 1%~
+  - name: "warden"
+    threshold: 28 # top 10%~
+  - name: "diamond"
+    threshold: 23.12 # top 25%~
+  - name: "gold"
+    threshold: 17.50 # top 50%~
+  - name: "iron"
+    threshold: 13 # top 70%~
+  - name: "sapling"
+    threshold: -100 # anyone else

@@ -6,6 +6,7 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import me.xemor.shuffler.config.ConfigYaml;
 import me.xemor.shuffler.config.DatabaseYaml;
+import me.xemor.shuffler.config.RatingYaml;
 import me.xemor.shuffler.game.AutostartListener;
 import me.xemor.shuffler.game.Game;
 import me.xemor.shuffler.game.GameCommand;
@@ -27,6 +28,7 @@ public final class Shuffler extends JavaPlugin {
 
     private ConfigYaml configYaml;
     private DatabaseYaml databaseYaml;
+    private RatingYaml ratingYaml;
     private HikariDataSource dataSource;
     private SQLDialect dialect;
 
@@ -38,9 +40,11 @@ public final class Shuffler extends JavaPlugin {
         ObjectMapper objectMapper = new ObjectMapper(new YAMLFactory());
         saveDefaultConfig();
         saveResource("database.yml", false);
+        saveResource("rating.yml", false);
         try {
             configYaml = objectMapper.readValue(new File(this.getDataFolder(), "config.yml"), ConfigYaml.class);
             databaseYaml = objectMapper.readValue(new File(this.getDataFolder(), "database.yml"), DatabaseYaml.class);
+            ratingYaml = objectMapper.readValue(new File(this.getDataFolder(), "rating.yml"), RatingYaml.class);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -92,11 +96,11 @@ public final class Shuffler extends JavaPlugin {
         return configYaml;
     }
 
+    public RatingYaml getRatingYaml() {
+        return ratingYaml;
+    }
+
     public DSLContext getContext() {
-        try {
-            return DSL.using(dataSource.getConnection(), dialect);
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
+        return DSL.using(dataSource, dialect);
     }
 }

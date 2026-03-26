@@ -47,6 +47,7 @@ repositories {
     maven { url = uri("https://maven.enginehub.org/repo/") }
     maven { url = uri("https://mvn-repo.arim.space/lesser-gpl3") }
     maven { url = uri("https://repo.xemor.zip/releases") }
+    maven { url = uri("https://repo.helpch.at/releases/")}
     maven(url = "https://s01.oss.sonatype.org/content/repositories/snapshots/") {
         name = "sonatype-oss-snapshots"
     }
@@ -68,6 +69,7 @@ dependencies {
     compileOnly("com.fasterxml.jackson.core:jackson-core:2.18.0")
     compileOnly("com.fasterxml.jackson.core:jackson-databind:2.18.2")
     compileOnly("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.7.0")
+    compileOnly("me.clip:placeholderapi:2.12.2")
 
     shadow("org.jooq:jooq:3.20.11")
     shadow("org.postgresql:postgresql:42.5.4")

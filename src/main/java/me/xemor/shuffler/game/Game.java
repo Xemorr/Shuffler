@@ -1,6 +1,7 @@
 package me.xemor.shuffler.game;
 
 import me.xemor.shuffler.Shuffler;
+import me.xemor.shuffler.rating.RatingHandler;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.title.Title;
 import org.bukkit.*;
@@ -43,7 +44,7 @@ public class Game {
     private Instant roundEnds;
     private BossBar bossBar;
     private boolean gameStarted = false;
-    private final EloHandler eloHandler = new EloHandler();
+    private final RatingHandler ratingHandler = new RatingHandler();
 
     private Game(Shuffler shuffler) {
         shuffler.getServer().getPluginManager().registerEvents(new PlayerRespawnHandler(this), shuffler);
@@ -257,8 +258,8 @@ public class Game {
         showGameEndTitles();
 
         if (alivePlayers.size() + deadPlayers.size() >= 2) {
-            eloHandler.updateElo(
-                    calculateRanks().entrySet().stream().map((it) -> new EloHandler.PlayerRankPair(it.getValue(), it.getKey())).toList()
+            ratingHandler.updateElo(
+                    calculateRanks().entrySet().stream().map((it) -> new RatingHandler.PlayerRankPair(it.getValue(), it.getKey())).toList()
             );
         }
 
