@@ -1,13 +1,9 @@
 package me.xemor.shuffler.game;
 
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Sets;
-import com.google.common.collect.Streams;
+import com.google.common.collect.*;
 import org.bukkit.*;
 import org.bukkit.block.Block;
-import org.bukkit.entity.Ageable;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.*;
 import org.bukkit.event.Listener;
 import org.bukkit.inventory.*;
 import org.bukkit.loot.LootContext;
@@ -15,7 +11,9 @@ import org.bukkit.loot.LootTables;
 
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 public class ItemGenerator implements Listener {
@@ -32,14 +30,14 @@ public class ItemGenerator implements Listener {
         Material material();
     }
     record WorldNode(Material material) implements ItemNode {}
-    record RecipeNode(Material material, int amount, List<Material> ingredients, RecipeType recipeType) implements ItemNode {
-        public RecipeNode(Material material, int amount, List<Material> ingredients, RecipeType recipeType) {
+    record RecipeNode(Material material, int amount, Map<Material, Integer> ingredients, RecipeType recipeType) implements ItemNode {
+        public RecipeNode(Material material, int amount, Map<Material, Integer> ingredients, RecipeType recipeType) {
             Objects.requireNonNull(material, "Material cannot be null");
             Objects.requireNonNull(ingredients, "Ingredients cannot be null");
             Objects.requireNonNull(recipeType, "Recipe type cannot be null");
             this.material = material;
             this.amount = amount;
-            this.ingredients = new ArrayList<>(ingredients); // this must be mutable
+            this.ingredients = new HashMap<>(ingredients); // this must be mutable
             this.recipeType = recipeType;
         }
     }
@@ -47,7 +45,68 @@ public class ItemGenerator implements Listener {
         CRAFTING, COOKING, STONECUTTING
     }
 
-    // Replace the craftingBag generation in getBagForPlayers with this LBP approach:
+    private ProbabilityBag flattenedCraftingProbabilities(ProbabilityBag rootBag, int iterations) {
+        List<RecipeNode> allRecipes = recipeNodes;
+        ProbabilityBag startingBag = new ProbabilityBag();
+        for (ProbabilityBag.Entry entry : rootBag.entries()) {
+            startingBag.addWeighting(entry.material(), entry.probability());
+        }
+        ProbabilityBag currentState = new ProbabilityBag().addWeighting(startingBag);
+
+        // Group recipes by their output Material to evaluate them together
+        Map<Material, List<RecipeNode>> recipesByResult = allRecipes.stream()
+                .collect(Collectors.groupingBy(RecipeNode::material));
+
+        // Iterate to propagate probabilities through loops
+        for (int i = 0; i < iterations; i++) {
+            ProbabilityBag nextState = new ProbabilityBag().addWeighting(startingBag);
+
+            for (Map.Entry<Material, List<RecipeNode>> entry : recipesByResult.entrySet()) {
+                Material resultMaterial = entry.getKey();
+                double recipeWeightSum = 0D;
+
+                for (RecipeNode recipe : entry.getValue()) {
+                    // Re-using your exact Vibe Math, but pulling from currentState
+                    Map<Material, Integer> groupedIngredients = recipe.ingredients();
+
+                    if (!currentState.containsAll(groupedIngredients.keySet())) {
+                        continue;
+                    }
+
+                    final ProbabilityBag effectivelyFinalCurrentState = currentState;
+                    // Maybe I should do a check to see if they're 'crafting independent' or not
+                    double independentP = groupedIngredients.entrySet().stream()
+                            .map(it -> effectivelyFinalCurrentState.get(it.getKey()) / it.getValue())
+                            .reduce(1D, (x, y) -> x * y);
+
+                    if (independentP == 1D) independentP = 0D;
+
+                    double minP = groupedIngredients.keySet().stream()
+                            .map(currentState::get)
+                            .reduce(Double.MAX_VALUE, Math::min);
+
+                    if (minP == Double.MAX_VALUE) minP = 0D;
+
+                    double p = (minP * 0.9 + 0.1 * independentP);
+                    if (recipe.recipeType() == RecipeType.COOKING) {
+                        p *= 0.97;
+                    }
+                    p *= recipe.amount();
+
+                    // Sum to better represent the difficulty of e.g sticks, rather than taking max.
+                    recipeWeightSum += p;
+                }
+
+                if (recipeWeightSum > 0) {
+                    // Update the next state with the best crafted weight
+                    nextState.maxWeighting(resultMaterial, recipeWeightSum);
+                }
+            }
+            currentState = nextState; // Move to next time step
+        }
+        return currentState;
+    }
+
     private ProbabilityBag runLoopyBeliefCraftingPropagation(ProbabilityBag rootBag, int iterations) {
         List<RecipeNode> allRecipes = recipeNodes;
         ProbabilityBag startingBag = new ProbabilityBag();
@@ -70,8 +129,7 @@ public class ItemGenerator implements Listener {
 
                 for (RecipeNode recipe : entry.getValue()) {
                     // Re-using your exact Vibe Math, but pulling from currentState
-                    Map<Material, Integer> groupedIngredients = recipe.ingredients().stream()
-                            .collect(Collectors.groupingBy(x -> x, Collectors.summingInt(x -> 1)));
+                    Map<Material, Integer> groupedIngredients = recipe.ingredients();
 
                     if (!currentState.containsAll(groupedIngredients.keySet())) {
                         continue;
@@ -119,29 +177,43 @@ public class ItemGenerator implements Listener {
         List<RecipeNode> nodes = new ArrayList<>(recipes.size());
         for (Recipe recipe : recipes) {
             Stream<Set<Material>> ingredientChoicesStream = switch (recipe) {
-                case ShapelessRecipe shapelessRecipe ->
-                        shapelessRecipe.getChoiceList().stream().filter(Objects::nonNull).map((choice) -> {
-                            return (switch (choice) {
-                                case RecipeChoice.MaterialChoice materialChoice -> {
-                                    yield new HashSet<>(materialChoice.getChoices());
-                                }
-                                case RecipeChoice.ExactChoice exactChoice ->
-                                        exactChoice.getChoices().stream().map(ItemStack::getType).collect(Collectors.toSet());
-                                default -> Set.of();
-                            });
-                        });
-                case ShapedRecipe shapedRecipe ->
-                    Arrays.stream(shapedRecipe.getShape()).flatMapToInt(String::chars).mapToObj((shapeIdentifier) -> {
-                        RecipeChoice choice = shapedRecipe.getChoiceMap().get((char) shapeIdentifier);
-                        if (choice == null) return Set.of();
+                case ShapelessRecipe shapelessRecipe -> {
+                    Stream<Set<Material>> ingredients = shapelessRecipe.getChoiceList().stream().filter(Objects::nonNull).map((choice) -> {
                         return (switch (choice) {
-                            case RecipeChoice.MaterialChoice materialChoice ->
-                                    new HashSet(materialChoice.getChoices());
+                            case RecipeChoice.MaterialChoice materialChoice -> {
+                                yield new HashSet<>(materialChoice.getChoices());
+                            }
                             case RecipeChoice.ExactChoice exactChoice ->
                                     exactChoice.getChoices().stream().map(ItemStack::getType).collect(Collectors.toSet());
                             default -> Set.of();
                         });
                     });
+                    /*if (shapelessRecipe.getChoiceList().size() > 4) {
+                        yield Stream.concat(ingredients, Stream.of(Set.of(Material.CRAFTING_TABLE)));
+                    } else yield ingredients;
+                     */
+                    yield ingredients;
+                }
+                case ShapedRecipe shapedRecipe -> {
+                    Stream<Set<Material>> ingredients = Arrays.stream(shapedRecipe.getShape()).flatMapToInt(String::chars).mapToObj((shapeIdentifier) -> {
+                        RecipeChoice choice = shapedRecipe.getChoiceMap().get((char) shapeIdentifier);
+                        if (choice == null) return Set.of();
+                        return (switch (choice) {
+                            case RecipeChoice.MaterialChoice materialChoice -> new HashSet<>(materialChoice.getChoices());
+                            case RecipeChoice.ExactChoice exactChoice ->
+                                    exactChoice.getChoices().stream().map(ItemStack::getType).collect(Collectors.toSet());
+                            default -> Set.of();
+                        });
+                    });
+                    /*String[] shape = shapedRecipe.getShape();
+                    if (shape.length <= 2
+                            && (shape.length == 0 || shape[0].length() <= 2)
+                            && (shape.length <= 1 || shape[1].length() <= 2)) {
+                        yield ingredients;
+                    } else yield Stream.concat(ingredients, Stream.of(Set.of(Material.CRAFTING_TABLE)));
+                     */
+                    yield ingredients;
+                }
                 case CookingRecipe cookingRecipe -> {
                     RecipeChoice inputChoice = cookingRecipe.getInputChoice();
                     Set<Material> materials = switch (inputChoice) {
@@ -156,8 +228,7 @@ public class ItemGenerator implements Listener {
                 case StonecuttingRecipe stonecuttingRecipe -> {
                     RecipeChoice inputChoice = stonecuttingRecipe.getInputChoice();
                     Set<Material> materials = switch (inputChoice) {
-                        case RecipeChoice.MaterialChoice materialChoice ->
-                                new HashSet<Material>(materialChoice.getChoices());
+                        case RecipeChoice.MaterialChoice materialChoice -> new HashSet<>(materialChoice.getChoices());
                         case RecipeChoice.ExactChoice exactChoice ->
                                 exactChoice.getChoices().stream().map(ItemStack::getType).collect(Collectors.toSet());
                         default -> Set.of();
@@ -166,7 +237,7 @@ public class ItemGenerator implements Listener {
                 }
                 default -> Stream.of(Set.of());
             };
-            List<Set<Material>> ingredientChoices = ingredientChoicesStream.toList();
+            List<Set<Material>> listOfChoicesInASlot = ingredientChoicesStream.toList();
 
             RecipeType recipeType = switch (recipe) {
                 case ShapelessRecipe shapelessRecipe -> {
@@ -187,16 +258,17 @@ public class ItemGenerator implements Listener {
             record ConcreteRecipeAndUniques(List<Material> ingredients, int uniques) {}
             List<ConcreteRecipeAndUniques> allPossibleConcreteRecipes;
             try {
-                allPossibleConcreteRecipes = cartesianProductGroupingIdenticalSets(ingredientChoices)
+                allPossibleConcreteRecipes = cartesianProductGroupingIdenticalSets(listOfChoicesInASlot)
                         .stream()
                         .map((it) -> new ConcreteRecipeAndUniques(it, new HashSet<>(it).size()))
                         .sorted(Comparator.comparingInt(ConcreteRecipeAndUniques::uniques))
                         .toList();
             } catch (IllegalArgumentException e) {
-                System.out.println(ingredientChoices);
+                System.out.println(listOfChoicesInASlot);
                 throw e;
             }
 
+            // Solve furnace problem
             int minimumUniqueMaterials = allPossibleConcreteRecipes.stream()
                     .map(ConcreteRecipeAndUniques::uniques)
                     .reduce(Math::min)
@@ -205,11 +277,77 @@ public class ItemGenerator implements Listener {
                     .filter((it) -> it.uniques() == minimumUniqueMaterials)
                     .map(ConcreteRecipeAndUniques::ingredients)
                     .toList();
-            // Solve furnace problem
+
             for (List<Material> ingredients : minimumUniquesRecipes) {
-                nodes.add(new RecipeNode(recipe.getResult().getType(), recipe.getResult().getAmount(), ingredients, recipeType));
+                nodes.add(
+                    new RecipeNode(
+                        recipe.getResult().getType(),
+                        recipe.getResult().getAmount(),
+                        ingredients.stream().collect(Collectors.groupingBy(Function.identity(), Collectors.summingInt(_ -> 1))),
+                        recipeType
+                    )
+                );
             }
         }
+
+        /*
+        SetMultimap<Material, RecipeNode> lookUpTable = nodes.stream()
+                .collect(Multimaps.toMultimap(
+                        RecipeNode::material,    // Function to extract the key
+                        v -> v,         // Function to extract the value
+                        MultimapBuilder.hashKeys().hashSetValues()::build
+                ));
+        record SetToCount<T>(Set<T> recipes, int count) {}
+        record ListToCount<T>(Map<T, Integer> recipes, int count) {}
+
+        record MapWithFunkyEqualsAndHashCode(Map<Material, Integer> map) {
+            public boolean equals(Object o) {
+                if (this == o) return true;
+                if (o == null || getClass() != o.getClass()) return false;
+                MapWithFunkyEqualsAndHashCode that = (MapWithFunkyEqualsAndHashCode) o;
+                return map.equals(that.map);
+            }
+        }
+
+        nodes = nodes.stream().flatMap((it) -> {
+            SetOfMapInteger setOfMapInteger = new SetOfMapInteger();
+            setOfMapInteger.add(it.ingredients());
+            int previousSize = 1;
+            for (int i = 0; i < 10; i++) {
+                Set<Map<Material, Integer>> newList = new HashSet<>();
+                for (Map<Material, Integer> ingredients : setOfMapInteger.getAllOptimalMaps()) {
+                    Map<Material, Integer> groupedIngredients = ingredients;
+                    List<Set<ListToCount<Material>>> toCartesianProduct = groupedIngredients.entrySet().stream()
+                            .map((entry) -> new SetToCount<>(lookUpTable.get(entry.getKey()), entry.getValue()))
+                            .map((recipesSetToCount) -> {
+                                Stream<Map<Material, Integer>> subIngredients = recipesSetToCount.recipes().stream().map(RecipeNode::ingredients);
+                                return subIngredients
+                                        .map((ingredient) -> new ListToCount<>(ingredient, recipesSetToCount.count()))
+                                        .collect(Collectors.toSet());
+                            })
+                            .toList();
+
+                    Set<List<ListToCount<Material>>> ingredientOptions = Sets.cartesianProduct(
+                            toCartesianProduct
+                    );
+
+                    newList.addAll(ingredientOptions.stream()
+                            .map((listOfListToCount) -> listOfListToCount.stream()
+                                    .flatMap((listToCount) -> IntStream.range(0, listToCount.count())
+                                            .boxed()
+                                            .flatMap((_) -> listToCount.recipes().entrySet().stream())
+                                    )
+                                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, Integer::sum))
+                            ).collect(Collectors.toSet()));
+                }
+                setOfMapInteger.addAll(newList);
+                if (previousSize == setOfMapInteger.size()) break;
+                else previousSize = setOfMapInteger.size();
+            }
+            return setOfMapInteger.getAllOptimalMaps().stream().map((ingredients) -> new RecipeNode(it.material(), it.amount(), ingredients, it.recipeType()));
+        }).toList();
+         */
+
         return nodes;
     }
 
@@ -278,8 +416,19 @@ public class ItemGenerator implements Listener {
             List<Material> mobDrops = Arrays.stream(chunk.getEntities()).flatMap((entity) -> {
                 if (entity.getY() > minHeight) {
                     if (entity instanceof Ageable ageable && !ageable.isAdult()) return Stream.of();
-                    LootTables lootTables = Registry.LOOT_TABLES.get(NamespacedKey.minecraft("entities/" + entity.getType().getKey().getKey().toLowerCase()));
+                    EntityType type = entity.getType();
+                    LootTables lootTables = switch (type) {
+                        case SHEEP -> {
+                            assert entity instanceof Sheep;
+                            yield Registry.LOOT_TABLES.get(NamespacedKey.minecraft("entities/" + entity.getType().getKey().getKey().toLowerCase() + "/" + ((Sheep) entity).getColor().name().toLowerCase()));
+                        }
+                        default -> Registry.LOOT_TABLES.get(NamespacedKey.minecraft("entities/" + entity.getType().getKey().getKey().toLowerCase()));
+                    };
                     if (lootTables == null) return Stream.of();
+                    if (lootTables == null && type == EntityType.SHEEP) {
+                        System.out.println("sheep broken");
+                        return Stream.of();
+                    }
                     return lootTables.getLootTable().populateLoot(ThreadLocalRandom.current(), (new LootContext.Builder(entity.getLocation()).lootedEntity(entity).killer(alivePlayers.iterator().next())).build())
                             .stream().map(ItemStack::getType);
                 }
@@ -287,8 +436,7 @@ public class ItemGenerator implements Listener {
             }).toList();
             availableMaterialsPerChunkKey.putAll(chunk.getChunkKey(), mobDrops);
             for (Material mobDrop : mobDrops) {
-                // Weight mob drops much more highly
-                availableMaterials.put(mobDrop, availableMaterials.getOrDefault(mobDrop, 0) + 120000);
+                availableMaterials.put(mobDrop, availableMaterials.getOrDefault(mobDrop, 0) + 50000);
             }
         }
 

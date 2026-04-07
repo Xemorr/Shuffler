@@ -30,7 +30,7 @@ public class V1__Initial extends BaseJavaMigration {
                     .column("player_id", SQLDataType.INTEGER.nullable(false))
                     .column("current_elo", SQLDataType.DOUBLE.nullable(false))
                     .column("current_uncertainty", SQLDataType.DOUBLE.nullable(false))
-                    .column("inserted_at", SQLDataType.INSTANT(13).nullable(false))
+                    .column("inserted_at", SQLDataType.INSTANT(9).nullable(false))
                     .constraints(
                             primaryKey("id"),
                             foreignKey("player_id").references("player", "id").onDeleteCascade()

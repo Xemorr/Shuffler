@@ -4,7 +4,7 @@ import java.lang.reflect.Modifier
 import java.net.URLClassLoader
 
 group = "me.xemor"
-version = "1.4"
+version = "1.5"
 description = "shuffler"
 java.sourceCompatibility = JavaVersion.VERSION_25
 java.targetCompatibility = JavaVersion.VERSION_25
@@ -62,7 +62,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:1.21.7-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     compileOnly("eu.cloudnetservice.cloudnet:driver-api:4.0.0-RC16")
     compileOnly("eu.cloudnetservice.cloudnet:bridge-api:4.0.0-RC16")
     compileOnly("eu.cloudnetservice.cloudnet:wrapper-jvm-api:4.0.0-RC16")

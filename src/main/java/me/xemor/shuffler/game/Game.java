@@ -1,8 +1,13 @@
 package me.xemor.shuffler.game;
 
+import com.google.common.collect.Multimap;
+import com.google.common.collect.MultimapBuilder;
+import com.google.common.collect.SetMultimap;
 import me.xemor.shuffler.Shuffler;
 import me.xemor.shuffler.rating.RatingHandler;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.title.Title;
 import org.bukkit.*;
 import org.bukkit.attribute.Attribute;
@@ -10,6 +15,7 @@ import org.bukkit.block.Biome;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.ShapedRecipe;
@@ -19,6 +25,7 @@ import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.jetbrains.annotations.NotNull;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -34,7 +41,7 @@ public class Game {
     private static Game instance;
 
     private final List<CompletableFuture<Void>> futuresWaitingOn = new ArrayList<>();
-    private Map<UUID, Material> searchingFor = new HashMap<>();
+    private SetMultimap<UUID, Material> searchingFor = MultimapBuilder.hashKeys().hashSetValues().build();
     private final Map<UUID, Spawnpoint> spawnpoints = new HashMap<>();
     private Set<UUID> alivePlayers = new HashSet<>();
     private final Map<UUID, Integer> deadPlayers = new HashMap<>();
@@ -44,6 +51,7 @@ public class Game {
     private Instant roundEnds;
     private BossBar bossBar;
     private boolean gameStarted = false;
+    private boolean extension = false;
     private final RatingHandler ratingHandler = new RatingHandler();
 
     private Game(Shuffler shuffler) {
@@ -105,7 +113,7 @@ public class Game {
                                             bag.getSamplesAroundItem(sample.material(), 20, 1D),
                                             sample.material(),
                                             180
-                                    ).thenAccept((it) -> {
+                                    ).thenAccept((_) -> {
                                         searchingFor.put(player.getUniqueId(), sample.material());
                                         roundStarted = Instant.now();
                                         roundEnds = roundStarted.plusSeconds(180);
@@ -128,16 +136,22 @@ public class Game {
     private List<CompletableFuture<Boolean>> teleportPlayersAndSetSpawnpoints(Collection<? extends Player> players) {
         World world = Bukkit.getWorld(Shuffler.getInstance().getConfigYaml().game().world());
         if (world == null) throw new IllegalStateException("Invalid World Specified at config.yml/game.world");
+        Location sumLocation = players.stream()
+                .map(Entity::getLocation)
+                .reduce(Location::add)
+                .orElse(world.getSpawnLocation().multiply(players.size()));
+        Location origin = sumLocation.multiply(1 / (double) players.size());
         List<@NotNull Chunk> chunks = new ArrayList<>(Arrays.stream(world.getLoadedChunks())
-                // Manhattan Distance is less than 19 chunk coordinates away from 0,0
-                .filter(chunk -> chunk.getX() + chunk.getZ() <= 19)
+                // Manhattan Distance is less than 25 chunk coordinates away from origin
+                .filter(chunk -> Math.abs(chunk.getX() + chunk.getZ() - origin.getChunk().getX() - origin.getChunk().getZ()) <= 25)
                 .toList());
         Collections.shuffle(chunks);
+
         List<@NotNull Chunk> nChunks = chunks.stream()
                 .filter((chunk -> {
                     ChunkSnapshot chunkSnapshot = chunk.getChunkSnapshot(true, true, false);
                     int highestBlockYAt = chunkSnapshot.getHighestBlockYAt(0, 0);
-                    Biome biome = chunkSnapshot.getBiome(0, highestBlockYAt, 0);
+                    Biome biome = chunkSnapshot.getBiome(0, highestBlockYAt - 2, 0);
                     return !biome.getKey().asString().contains("ocean");
                 }))
                 .limit(players.size())
@@ -148,11 +162,11 @@ public class Game {
             Location location = new Location(
                     world,
                     0,
-                    world.getHighestBlockYAt(0, 0) + 80,
+                    world.getHighestBlockYAt(0, 0),
                     0
             );
             for (Player player : players) {
-                spawnpoints.put(player.getUniqueId(), new Spawnpoint(SKY, location));
+                spawnpoints.put(player.getUniqueId(), new Spawnpoint(NO_CHUNKS, location));
             }
         }
         else {
@@ -186,8 +200,8 @@ public class Game {
                 player.getInventory().addItem(new ItemStack(Material.OAK_BOAT, 1));
                 yield player.teleportAsync(location);
             }
-            case Spawnpoint(Spawnpoint.SpawnType spawntype, Location location) when spawntype == SKY -> {
-                player.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, 20 * 120, 1));
+            case Spawnpoint(Spawnpoint.SpawnType spawntype, Location location) when spawntype == NO_CHUNKS -> {
+                player.addPotionEffect(new PotionEffect(PotionEffectType.DOLPHINS_GRACE, 20 * 120, 1));
                 player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 20 * 120, 1));
                 yield player.teleportAsync(location);
             }
@@ -195,7 +209,7 @@ public class Game {
         };
     }
 
-    public Material searchingFor(Player player) {
+    public Set<Material> searchingFor(Player player) {
         return searchingFor.get(player.getUniqueId());
     }
 
@@ -233,19 +247,39 @@ public class Game {
     }
 
     private void handleRoundEnd() {
-        level++;
         futuresWaitingOn.clear();
+        if (alivePlayers.containsAll(searchingFor.keySet()) && searchingFor.keySet().containsAll(alivePlayers) && !extension) {
+            roundEnds = Instant.now().plusSeconds(300);
+            extension = true;
 
-        if (alivePlayers.containsAll(searchingFor.keySet()) && searchingFor.keySet().containsAll(alivePlayers)) {
-            roundEnds = Instant.now().plusSeconds(30);
+            Component mainTitle = MiniMessage.miniMessage().deserialize("<rainbow>Extension</rainbow>");
+            Component subtitle = Component.text("Find any item to survive this round!", NamedTextColor.WHITE);
+
+            Title.Times times = Title.Times.times(
+                    Duration.ofMillis(500),  // Fade in
+                    Duration.ofSeconds(3),   // Stay
+                    Duration.ofMillis(500)   // Fade out
+            );
+
+            Title title = Title.title(mainTitle, subtitle, times);
+
+            List<Material> allMaterialsToSearchFor = new ArrayList<>(searchingFor.values());
+            searchingFor.clear();
+            for (UUID alivePlayer : alivePlayers) {
+                searchingFor.putAll(alivePlayer, allMaterialsToSearchFor);
+                Player player = Bukkit.getPlayer(alivePlayer);
+                if (player == null) continue;
+                player.showTitle(title);
+            }
         } else {
+            level++;
             deadPlayers.putAll(
                     searchingFor.keySet()
                     .stream()
                     .collect(Collectors.toMap((it) -> it, (_) -> level))
             );
             alivePlayers.removeAll(searchingFor.keySet());
-            if (alivePlayers.size() <= 1) {
+            if (alivePlayers.isEmpty() || !deadPlayers.isEmpty() && alivePlayers.size() == 1) {
                 handleGameEnd();
             } else {
                 startNextLevel();
@@ -292,10 +326,10 @@ public class Game {
                         entry -> levelToRank.get(entry.getValue()) + 1 // + 1 to account for winner yet to be added
                 ));
 
-        if (alivePlayers.size() > 1) throw new IllegalStateException("more than 1 winner");
-
         Map<UUID, Integer> playersRanks = deadPlayersRanks;
-        playersRanks.put(alivePlayers.iterator().next(), 1);
+        for (UUID player : alivePlayers) {
+            playersRanks.put(player, 1);
+        }
 
         return playersRanks;
     }
@@ -320,11 +354,10 @@ public class Game {
     }
 
     private void startNextLevel() {
+        extension = false;
         bossBar.setTitle("Shuffling!");
         bossBar.setProgress(1.0);
-        searchingFor = searchingFor.entrySet().stream()
-                .filter((entry) -> alivePlayers.contains(entry.getKey()))
-                .collect(HashMap::new, (map, entry) -> map.put(entry.getKey(), entry.getValue()), HashMap::putAll);
+        searchingFor.clear();
 
         ProbabilityBag bag = itemGenerator.getBagForPlayers(
                 alivePlayers.stream().map(Bukkit::getPlayer).filter(Objects::nonNull).toList(),
@@ -363,7 +396,12 @@ public class Game {
 
     private void updateBossBar(long timeRemainingInSeconds) {
         bossBar.setProgress((double) timeRemainingInSeconds / getMaximumTimeAllotted());
-        bossBar.setTitle("Round %s. Time Remaining: %s".formatted(level, timeRemainingInSeconds));
+        if (!extension) {
+            bossBar.setTitle("Round %s. Time Remaining: %s".formatted(level, timeRemainingInSeconds));
+        }
+        else {
+            bossBar.setTitle("EXTENSION! Time Remaining: %s".formatted(timeRemainingInSeconds));
+        }
     }
 
     private void checkPlayerProgress() {
@@ -371,37 +409,48 @@ public class Game {
             Player player = Bukkit.getPlayer(playerUUID);
             if (player == null) continue;
 
-            Material material = searchingFor.get(player.getUniqueId());
+            Set<Material> materials = searchingFor.get(player.getUniqueId());
 
-            if (hasPlayerFoundItem(player, material)) {
-                searchingFor.remove(player.getUniqueId());
-                announceItemFound(player, material);
+            if (hasPlayerFoundItem(player, materials)) {
+                announceItemFound(player, materials);
+                searchingFor.removeAll(player.getUniqueId());
             }
 
-            updatePlayerActionBar(player, material);
+            updatePlayerActionBar(player, materials);
         }
     }
 
-    private boolean hasPlayerFoundItem(Player player, Material material) {
+    private boolean hasPlayerFoundItem(Player player, Set<Material> materials) {
         boolean inInventory = Arrays.stream(player.getInventory().getContents())
-                .anyMatch((item) -> item != null && item.getType() == material);
+                .anyMatch((item) -> item != null && materials.contains(item.getType()));
 
-        return player.getLocation().subtract(0, 1, 0).getBlock().getType() == material
-                || player.getLocation().getBlock().getType() == material
+        return materials.contains(player.getLocation().subtract(0, 1, 0).getBlock().getType())
+                || materials.contains(player.getLocation().getBlock().getType())
                 || inInventory;
     }
 
-    private void announceItemFound(Player player, Material material) {
+    private void announceItemFound(Player player, Set<Material> materials) {
         for (Player player1 : Bukkit.getOnlinePlayers()) {
-            player1.sendMessage("%s has found %s".formatted(player.getName(), material));
+            if (materials.size() == 1) {
+                player1.sendMessage(Component.text("%s has found ".formatted(player.getName()))
+                        .append(SearchingForFormatter.formatSearchMessage(Set.of(materials.iterator().next())))
+                        .append(Component.text("!")));
+            }
+            else {
+                player1.sendMessage("%s has found their item!".formatted(player.getName()));
+            }
         }
     }
 
-    private void updatePlayerActionBar(Player player, Material material) {
-        if (material == null) {
+    private void updatePlayerActionBar(Player player, Set<Material> materials) {
+        if (materials.isEmpty()) {
             player.sendActionBar(Component.text("(%s players left) You have found the item!".formatted(alivePlayers.size())));
         } else {
-            player.sendActionBar(Component.text("(%s player left) Searching for %s!".formatted(alivePlayers.size(), material.name())));
+            player.sendActionBar(
+                    Component.text("(%s player left) Searching for ".formatted(alivePlayers.size()))
+                            .append(SearchingForFormatter.formatSearchMessage(materials))
+                            .append(Component.text("!"))
+            );
         }
     }
 

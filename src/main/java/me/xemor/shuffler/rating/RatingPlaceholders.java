@@ -4,6 +4,8 @@ import me.clip.placeholderapi.expansion.PlaceholderExpansion;
 import org.bukkit.OfflinePlayer;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Optional;
+
 public class RatingPlaceholders extends PlaceholderExpansion {
 
     private final RatingHandler ratingHandler;
@@ -35,25 +37,27 @@ public class RatingPlaceholders extends PlaceholderExpansion {
     @Override
     public String onRequest(OfflinePlayer player, @NotNull String identifier) {
         if (identifier.startsWith("leaderboard")) {
-            String[] s = identifier.split("_", 2);
+            String[] s = identifier.split("_", 3);
             if (s.length >= 3) {
                 int rank = Integer.parseInt(s[1]);
                 if (rank > 100) throw new IllegalArgumentException("Rank must be between 1 and 100");
-                RatingHandler.PlayerConservativeRating rating = ratingHandler.getLeaderboardEntryUpTo100(rank);
-                String nameOrConservativeElo = s[2];
-                if ("conservative_elo".equals(nameOrConservativeElo)) {
-                    return rating.conservativeElo() + "";
-                }
-                else if ("name".equals(nameOrConservativeElo)) {
-                    return rating.name();
-                }
-                else if ("uuid".equals(nameOrConservativeElo)) {
-                    return rating.playerUUID() + "";
-                }
-                else {
-                    throw new IllegalArgumentException(identifier + " is not a valid placeholder!");
-                }
+                Optional<RatingHandler.PlayerConservativeRating> optRating = ratingHandler.getLeaderboardEntryUpTo100(rank);
+                return optRating.map((rating) -> {
+                    String nameOrConservativeElo = s[2];
+                    return switch (nameOrConservativeElo) {
+                        case "conservative_elo" -> rating.conservativeElo() + "";
+                        case "name" -> rating.name();
+                        case "uuid" -> rating.playerUUID() + "";
+                        case null, default ->
+                                throw new IllegalArgumentException(identifier + " is not a valid placeholder!");
+                    };
+                }).orElse("None");
             }
+        }
+        else if (identifier.equals("conservative_elo")) {
+            return ratingHandler.getPlayerRating(player.getUniqueId())
+                    .map(RatingHandler.PlayerConservativeRating::conservativeElo)
+                    .map(String::valueOf).orElse("0");
         }
         return null;
     }

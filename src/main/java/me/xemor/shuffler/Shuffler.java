@@ -11,6 +11,7 @@ import me.xemor.shuffler.game.AutostartListener;
 import me.xemor.shuffler.game.Game;
 import me.xemor.shuffler.game.GameCommand;
 import me.xemor.shuffler.migrations.V1__Initial;
+import me.xemor.shuffler.migrations.V2__GameTable;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -77,7 +78,7 @@ public final class Shuffler extends JavaPlugin {
         dataSource = new HikariDataSource(config);
         Flyway flyway = Flyway.configure(this.getClass().getClassLoader())
                 .dataSource(dataSource)
-                .javaMigrations(new V1__Initial())
+                .javaMigrations(new V1__Initial(), new V2__GameTable())
                 .load();
 
         flyway.migrate();

@@ -8,6 +8,7 @@ import com.pocketcombats.openskill.data.SimpleTeamResult;
 import com.pocketcombats.openskill.data.TeamResult;
 import com.pocketcombats.openskill.model.PlackettLuce;
 import me.xemor.shuffler.Shuffler;
+import me.xemor.shuffler.dest.generated.tables.records.GameRecord;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -18,6 +19,7 @@ import org.bukkit.scheduler.BukkitRunnable;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record2;
+import org.jooq.Result;
 import org.jooq.impl.DSL;
 
 import java.time.Instant;
@@ -25,9 +27,8 @@ import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static me.xemor.shuffler.dest.generated.Tables.ELO;
-import static me.xemor.shuffler.dest.generated.Tables.PLAYER;
-import static org.jooq.impl.DSL.val;
+import static me.xemor.shuffler.dest.generated.Tables.*;
+import static org.jooq.impl.DSL.*;
 
 public class RatingHandler implements Listener {
 
@@ -45,7 +46,7 @@ public class RatingHandler implements Listener {
         }
         ranks = Shuffler.getInstance().getRatingYaml().ranks()
                 .stream()
-                .sorted(Comparator.comparingDouble(Rank::threshold))
+                .sorted(Comparator.comparingDouble(Rank::threshold).reversed())
                 .toList();
         new BukkitRunnable() {
             @Override
@@ -70,12 +71,17 @@ public class RatingHandler implements Listener {
                             .from(PLAYER)
                             .join(ELO).on(PLAYER.ID.eq(ELO.PLAYER_ID))
                             .where(PLAYER.UUID.eq(e.getPlayer().getUniqueId()))
+                            .orderBy(ELO.INSERTED_AT.desc())
+                            .limit(1)
                             .fetch()
                             .stream()
                             .map(it -> new PlayerConservativeRating(it.value1(), it.value2(), it.value3()))
                             .findAny()
                             .orElse(new PlayerConservativeRating(player.getUniqueId(), player.getName(), 0));
                     playerConservativeRatings.put(player.getUniqueId(), rating);
+                    if (top100Leaderboard.stream().noneMatch((it) -> it.playerUUID().equals(rating.playerUUID()))) {
+                        top100Leaderboard.add(rating);
+                    }
                     Rank rank = ranks.stream().filter(r -> rating.conservativeElo() >= r.threshold()).findFirst().orElseThrow(() -> new IllegalStateException("no valid rank for player with elo " + rating.conservativeElo()));
                     player.addAttachment(Shuffler.getInstance(), "shuffler.rank." + rank.name(), true);
                     if (!rating.name().equals(player.getName())) {
@@ -95,26 +101,69 @@ public class RatingHandler implements Listener {
         Shuffler.getInstance().getContext().transaction(configuration -> {
             DSLContext ctx = DSL.using(configuration);
 
-            Field<Double> conservativeElo = ELO.CURRENT_ELO.minus(ELO.CURRENT_UNCERTAINTY.mul(3)).as("conservativeElo");
-            top100Leaderboard = ctx.select(PLAYER.UUID, PLAYER.NAME, conservativeElo)
+            Field<Double> calcElo = ELO.CURRENT_ELO.minus(ELO.CURRENT_UNCERTAINTY.mul(3)).as("conservative_elo_val");
+            var latestElo = ctx.select(
+                            ELO.PLAYER_ID.as("PLAYER_ID"),
+                            calcElo, // Put the calculated field here
+                            rowNumber().over(
+                                    partitionBy(ELO.PLAYER_ID).orderBy(ELO.INSERTED_AT.desc())
+                            ).as("rownumber")
+                    )
+                    .from(ELO)
+                    .asTable("latest_elo");
+
+            Field<Double> topEloField = latestElo.field("conservative_elo_val", Double.class);
+
+            top100Leaderboard = ctx
+                    .select(
+                            PLAYER.UUID,
+                            PLAYER.NAME,
+                            topEloField
+                    )
                     .from(PLAYER)
-                    .join(ELO).on(PLAYER.ID.eq(ELO.PLAYER_ID))
-                    .orderBy(conservativeElo.desc())
+                    .join(latestElo).on(PLAYER.ID.eq(latestElo.field("PLAYER_ID", Integer.class)))
+                    .where(latestElo.field("rownumber", Integer.class).eq(1))
+                    .orderBy(topEloField.desc())
                     .limit(100)
                     .fetch()
-                    .stream()
-                    .map(it -> new PlayerConservativeRating(it.value1(), it.value2(), it.value3()))
-                    .collect(Collectors.toList());
+                    .map(it -> new PlayerConservativeRating(
+                            it.get(PLAYER.UUID),
+                            it.get(PLAYER.NAME),
+                            it.get(topEloField)
+                    ));
         });
     }
 
-    public PlayerConservativeRating getLeaderboardEntryUpTo100(int rank) {
-        return top100Leaderboard.get(rank - 1);
+    public Optional<PlayerConservativeRating> getLeaderboardEntryUpTo100(int rank) {
+        if (rank <= top100Leaderboard.size()) {
+            return Optional.of(top100Leaderboard.get(rank - 1));
+        } else return Optional.empty();
+    }
+
+    public Optional<PlayerConservativeRating> getPlayerRating(UUID playerUUID) {
+        return Optional.ofNullable(playerConservativeRatings.get(playerUUID));
     }
 
     public void updateElo(List<PlayerRankPair> rankToUUID) {
         Shuffler.getInstance().getContext().transaction(configuration -> {
             DSLContext ctx = DSL.using(configuration);
+
+            int gameId = ctx.insertInto(GAME)
+                    .columns(GAME.INSERTED_AT)
+                    .values(Instant.now().atOffset(ZoneOffset.UTC))
+                    .returning()
+                    .fetch()
+                    .stream()
+                    .findFirst()
+                    .map(GameRecord::getId)
+                    .orElseThrow();
+
+            for (PlayerRankPair pair : rankToUUID) {
+                ctx.insertInto(GAME_RANKING)
+                    .columns(GAME_RANKING.GAME_ID, GAME_RANKING.PLAYER_ID, GAME_RANKING.RANK)
+                    .select(ctx.select(val(gameId), PLAYER.ID, val(pair.rank)).from(PLAYER).where(PLAYER.UUID.eq(pair.playerUUID())))
+                    .execute();
+            }
 
             List<TeamResult<UUID>> teamResults = rankToUUID
                     .stream()
@@ -146,7 +195,6 @@ public class RatingHandler implements Listener {
 
             RatingModelConfig config = RatingModelConfig.builder()
                     .setBeta(25.0 / 6)
-                    .setZ(25.0 / 6) // default is 3, my vibe is that draws are quite likely in BlockShuffle.
                     .build();
 
             Adjudicator<UUID> adjudicator = new Adjudicator<>(
@@ -165,7 +213,6 @@ public class RatingHandler implements Listener {
                         )
                         .execute();
             }
-
         });
     }
 
