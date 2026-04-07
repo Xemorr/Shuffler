@@ -393,7 +393,7 @@ public class Game {
 
     private void announceItemFound(Player player, Material material) {
         for (Player player1 : Bukkit.getOnlinePlayers()) {
-            player1.sendMessage("%s has found %s".formatted(player.getName(), material));
+            player1.sendMessage("%s has found %s".formatted(player.getName(), SearchingForFormatter.));
         }
     }
 
