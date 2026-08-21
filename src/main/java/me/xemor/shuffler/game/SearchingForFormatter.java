@@ -10,7 +10,6 @@ import java.util.Set;
 public class SearchingForFormatter {
 
     public static Component formatSearchMessage(Set<Material> materials) {
-        // Handle the "Nothing" case
         if (materials.isEmpty()) {
             return Component.text("Nothing", NamedTextColor.GRAY);
         }
@@ -39,7 +38,6 @@ public class SearchingForFormatter {
     }
 
     private static Component getFriendlyName(Material material) {
-        // Adventure natively supports translation keys
         return Component.translatable(material.translationKey());
     }
 }

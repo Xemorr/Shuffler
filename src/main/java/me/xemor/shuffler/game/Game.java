@@ -1,6 +1,5 @@
 package me.xemor.shuffler.game;
 
-import com.google.common.collect.Multimap;
 import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.SetMultimap;
 import me.xemor.shuffler.Shuffler;
@@ -12,9 +11,11 @@ import net.kyori.adventure.title.Title;
 import org.bukkit.*;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.block.Biome;
+import org.bukkit.block.Block;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.boss.BossBar;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -46,7 +47,7 @@ public class Game {
     private Set<UUID> alivePlayers = new HashSet<>();
     private final Map<UUID, Integer> deadPlayers = new HashMap<>();
     private int level = 1;
-    private final ItemGenerator itemGenerator = new ItemGenerator();
+    private final ConstantItemGenerator itemGenerator;
     private Instant roundStarted;
     private Instant roundEnds;
     private BossBar bossBar;
@@ -55,7 +56,12 @@ public class Game {
     private final RatingHandler ratingHandler = new RatingHandler();
 
     private Game(Shuffler shuffler) {
-        shuffler.getServer().getPluginManager().registerEvents(new PlayerRespawnHandler(this), shuffler);
+        shuffler.getServer().getPluginManager().registerEvents(new GameListeners(this), shuffler);
+        itemGenerator = new ConstantItemGenerator();
+    }
+
+    public int getLevel() {
+        return level;
     }
 
     public static Game getInstance() {
@@ -84,10 +90,11 @@ public class Game {
         for (Player player : Bukkit.getOnlinePlayers()) {
             discoverRecipes(player);
             player.setHealth(player.getAttribute(Attribute.MAX_HEALTH).getValue());
+            player.setFoodLevel(20);
+            player.setSaturation(20);
+            player.getInventory().close();
             player.getInventory().clear();
             player.setItemOnCursor(null);
-            player.getInventory().addItem(new ItemStack(Material.COOKED_BEEF, 8));
-            player.getInventory().addItem(new ItemStack(Material.TORCH, 64));
             for (String playerCommand : Shuffler.getInstance().getConfigYaml().automating().commandsPerPlayerOnStart()) {
                 getServer().dispatchCommand(Bukkit.getConsoleSender(), playerCommand.replace("<player>", player.getName()));
             }
@@ -96,6 +103,7 @@ public class Game {
         for (String command : Shuffler.getInstance().getConfigYaml().automating().commandsOnStart()) {
             getServer().dispatchCommand(Bukkit.getConsoleSender(), command);
         }
+        itemGenerator.setupLegalItemsTracker(this);
         new BukkitRunnable() {
             @Override
             public void run() {
@@ -140,25 +148,25 @@ public class Game {
                 .map(Entity::getLocation)
                 .reduce(Location::add)
                 .orElse(world.getSpawnLocation().multiply(players.size()));
-        Location origin = sumLocation.multiply(1 / (double) players.size());
+        Location origin = sumLocation.multiply(1D / players.size());
         List<@NotNull Chunk> chunks = new ArrayList<>(Arrays.stream(world.getLoadedChunks())
                 // Manhattan Distance is less than 25 chunk coordinates away from origin
-                .filter(chunk -> Math.abs(chunk.getX() + chunk.getZ() - origin.getChunk().getX() - origin.getChunk().getZ()) <= 25)
-                .toList());
+                .filter(chunk -> Math.abs(chunk.getX() - origin.getChunk().getX()) + Math.abs(chunk.getZ() - origin.getChunk().getZ()) <= 25)
+                .toList()
+        );
         Collections.shuffle(chunks);
 
         List<@NotNull Chunk> nChunks = chunks.stream()
                 .filter((chunk -> {
-                    ChunkSnapshot chunkSnapshot = chunk.getChunkSnapshot(true, true, false);
-                    int highestBlockYAt = chunkSnapshot.getHighestBlockYAt(0, 0);
-                    Biome biome = chunkSnapshot.getBiome(0, highestBlockYAt - 2, 0);
-                    return !biome.getKey().asString().contains("ocean");
+                    Block highestBlockAt = chunk.getWorld().getHighestBlockAt(chunk.getX() + 8, chunk.getZ() + 8);
+                    Biome biome = highestBlockAt.getBiome();
+                    return !biome.getKey().getKey().contains("ocean");
                 }))
                 .limit(players.size())
                 .toList();
 
         Spawnpoint.SpawnType spawnType = STANDARD;
-        if (nChunks.isEmpty() && chunks.isEmpty()) {
+        if (chunks.isEmpty()) {
             Location location = new Location(
                     world,
                     0,
@@ -192,6 +200,10 @@ public class Game {
 
     public CompletableFuture<Boolean> spawnPlayer(Player player) {
         Spawnpoint spawnpoint = spawnpoints.get(player.getUniqueId());
+        ItemStack goldenCarrots = new ItemStack(Material.GOLDEN_CARROT, 10);
+        goldenCarrots.addUnsafeEnchantment(Enchantment.VANISHING_CURSE, 1);
+        player.getInventory().addItem(goldenCarrots);
+        player.getInventory().addItem(new ItemStack(ThreadLocalRandom.current().nextInt(10) == 1 ? Material.COPPER_TORCH : Material.TORCH, 64));
         return switch (spawnpoint) {
             case Spawnpoint(Spawnpoint.SpawnType spawntype, Location location) when spawntype == STANDARD -> {
                 yield player.teleportAsync(location);
@@ -360,11 +372,26 @@ public class Game {
         searchingFor.clear();
 
         ProbabilityBag bag = itemGenerator.getBagForPlayers(
-                alivePlayers.stream().map(Bukkit::getPlayer).filter(Objects::nonNull).toList(),
-                level
+                alivePlayers.stream().map(Bukkit::getPlayer).filter(Objects::nonNull).toList()
         );
         double weightingCap = Math.pow(1 / 3D, level - 1);
-        List<ProbabilityBag.SampleResult> samples = bag.samples(alivePlayers.size(), weightingCap);
+
+        boolean hasError;
+        List<ProbabilityBag.SampleResult> samples = Collections.emptyList();
+        do {
+            hasError = false;
+            try {
+                 samples = bag.samples(alivePlayers.size(), weightingCap);
+            } catch (IllegalStateException e) {
+                // If wee woo, slowly increase weighting cap until it is happy.
+                weightingCap *= 2;
+                hasError = true;
+                if (weightingCap > 1) {
+                    throw new IllegalStateException("Weighting cap exceeded maximum value of 1.0");
+                }
+            }
+        } while (hasError);
+
 
         Iterator<UUID> iterator = alivePlayers.iterator();
         for (int i = 0; i < alivePlayers.size(); i++) {

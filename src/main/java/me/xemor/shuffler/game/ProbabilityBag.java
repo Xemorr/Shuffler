@@ -4,12 +4,13 @@ import org.bukkit.Material;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class ProbabilityBag {
 
     private double totalWeighting = 0;
-    private Map<Material, Double> bag = new HashMap<>();
+    private final Map<Material, Double> bag = new EnumMap<>(Material.class);
 
     public ProbabilityBag() {}
 
@@ -45,7 +46,7 @@ public class ProbabilityBag {
     }
 
     public ProbabilityBag addWeighting(Material type, double weighting) {
-        bag.put(type, bag.getOrDefault(type, 0D) + weighting);
+        bag.merge(type, weighting, Double::sum);
         totalWeighting += weighting;
         return this;
     }
