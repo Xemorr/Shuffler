@@ -37,6 +37,7 @@ final class SampleTracker extends BukkitRunnable {
     private static final int VIEW_RAY_COST = 5;
     private static final double HEALTHY_TPS = 19.9;
     private static final int MIN_BUDGET_STEP = 50;
+    private static final int MIN_BUDGET_PER_TICK = 100;
 
     private final Game game;
     private final Map<UUID, SampleHistory> histories;
@@ -136,7 +137,7 @@ final class SampleTracker extends BukkitRunnable {
      * server is keeping up, less if not, in ever smaller steps.
      */
     private void adaptBudget() {
-        budgetPerTick += Bukkit.getTPS()[0] >= HEALTHY_TPS ? budgetStep : -budgetStep;
+        budgetPerTick = Math.max(MIN_BUDGET_PER_TICK, budgetPerTick + (Bukkit.getTPS()[0] >= HEALTHY_TPS ? budgetStep : -budgetStep));
         budgetStep = Math.max(MIN_BUDGET_STEP, budgetStep - 5);
         Shuffler.getInstance().getLogger().fine("Tracker did not finish in " + MAX_TICKS_PER_SEARCH + " ticks. Budget per tick is now " + budgetPerTick);
     }
