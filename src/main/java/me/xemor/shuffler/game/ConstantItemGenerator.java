@@ -24,7 +24,15 @@ public class ConstantItemGenerator implements Listener {
 
     private final List<RecipeNode> recipeNodes;
     private final CraftingDifficultyModel craftingDifficultyModel;
+    /** What has been found around each player since the round began. */
     private final Map<UUID, SampleHistory> histories = new HashMap<>();
+    /** Each finished round's bag, worked out once and never revisited. */
+    private final List<FrozenRound> frozenRounds = new ArrayList<>();
+
+    /**
+     * @param searches how many searches the round's bag is made from, which is how much it counts when rounds are merged
+     */
+    private record FrozenRound(ProbabilityBag bag, int searches) {}
     /** Seconds apart that finds can be and still largely come from the same place. */
     private static final double SAME_PLACE_TAU = 120;
     /** Seconds between the moments whose surroundings are worked out and averaged. */
@@ -75,6 +83,8 @@ public class ConstantItemGenerator implements Listener {
      * Starts sampling around the players of this game, which fills the bags {@link #getBagForPlayers} reads.
      */
     public void setupLegalItemsTracker(Game game) {
+        histories.clear();
+        frozenRounds.clear();
         new SampleTracker(game, histories).runTaskTimer(Shuffler.getInstance(), 0, 1);
     }
 
@@ -308,18 +318,38 @@ public class ConstantItemGenerator implements Listener {
     }
 
     /**
-     * Combines everything sampled around the alive players, as one bag would have. Each player's finds are smoothed
-     * over time on their own, since finds close in time are more likely to be from the same place, but finds by
-     * different players are independent. Crafting is worked out on each player's smoothed windows, and only then are the
-     * players merged ({@link SampleHistory}). Players who have not been sampled yet add nothing.
+     * Freezes the round that has just finished and returns the bag of all the rounds so far. Call it once per round.
+     * <p>
+     * Within the round, each player's finds are smoothed over time on their own, since finds close in time are more
+     * likely to be from the same place, but finds by different players are independent. Crafting is worked out on each
+     * player's smoothed windows, and only then are the players merged ({@link SampleHistory}). That bag is never worked
+     * out again: the rounds are merged in proportion to how many searches each is made from, so smoothing only ever
+     * looks at one round's samples. Players who have not been sampled yet add nothing.
      */
     public ProbabilityBag getBagForPlayers(Collection<? extends Player> alivePlayers) {
         if (alivePlayers.isEmpty()) throw new IllegalArgumentException("Alive players must contain at least one player");
 
-        return SampleHistory.bag(alivePlayers.stream()
+        freezeRound(alivePlayers);
+        int searches = frozenRounds.stream().mapToInt(FrozenRound::searches).sum();
+        ProbabilityBag merged = new ProbabilityBag();
+        for (FrozenRound round : frozenRounds) merged.addNormalised(round.bag(), (double) round.searches() / searches);
+        return merged;
+    }
+
+    /**
+     * Works out the bag of the samples taken since the last round and starts the next round's samples afresh.
+     */
+    private void freezeRound(Collection<? extends Player> alivePlayers) {
+        List<SampleHistory> roundHistories = alivePlayers.stream()
                 .map(player -> histories.get(player.getUniqueId()))
                 .filter(Objects::nonNull)
-                .toList(), craftingDifficultyModel, SAME_PLACE_TAU, WINDOW_SPACING);
+                .toList();
+        int searches = roundHistories.stream().mapToInt(SampleHistory::size).sum();
+        histories.clear();
+        if (searches == 0) return;
+
+        ProbabilityBag bag = SampleHistory.bag(roundHistories, craftingDifficultyModel, SAME_PLACE_TAU, WINDOW_SPACING);
+        if (!bag.isEmpty()) frozenRounds.add(new FrozenRound(bag, searches));
     }
 
     /**
