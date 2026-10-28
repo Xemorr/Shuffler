@@ -93,6 +93,9 @@ final class SampleTracker extends BukkitRunnable {
 
         // Each search gets a sample of its own, which joins the player's history when the search ends.
         sample = new PlayerSample();
+        for (ItemStack stack : player.getInventory().getContents()) {
+            if (stack != null) sample.addCarried(stack.getType());
+        }
         search = new NearbySearch(player, sample, dropsCache);
         view = new ViewSampler(player.getEyeLocation(), player, VIEW_RAYS_PER_SEARCH, sample.viewedDrops(), sample.viewedBlocks(), viewDropsCache);
         ticksRunning = 0;

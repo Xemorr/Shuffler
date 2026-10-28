@@ -20,9 +20,11 @@ final class PlayerSample {
 
     /** The share of the drops bag, and of the stand-on bag, that comes from what the player can see from afar. */
     private static final double VIEW_WEIGHT = 0.2;
+    /** The share of each of those that is what the player is carrying, taken from the nearby share. */
+    private static final double INVENTORY_WEIGHT = 0.1;
 
-    /** The four bags a sample is made of. */
-    enum Part { DROPS, STAND_ON, VIEWED_DROPS, VIEWED_BLOCKS }
+    /** The bags a sample is made of. */
+    enum Part { DROPS, STAND_ON, VIEWED_DROPS, VIEWED_BLOCKS, CARRIED, CARRIED_BLOCKS }
 
     private final Map<Part, ProbabilityBag> parts = new EnumMap<>(Part.class);
 
@@ -40,6 +42,16 @@ final class PlayerSample {
 
     void addStandOn(Material material, double weighting) {
         part(Part.STAND_ON).addWeighting(material, weighting);
+    }
+
+    /**
+     * Records what the player is carrying, each kind of item once however many of it there are, so that a stack of
+     * cobblestone does not drown out the rest. Blocks also count towards what they could stand on.
+     */
+    void addCarried(Material material) {
+        if (material.isAir()) return;
+        part(Part.CARRIED).addWeighting(material, 1);
+        if (material.isBlock()) part(Part.CARRIED_BLOCKS).addWeighting(material, 1);
     }
 
     ProbabilityBag viewedDrops() {
@@ -61,19 +73,19 @@ final class PlayerSample {
      * @return this player's bag: half of its weight is the drops with crafting worked out, half the blocks they could stand on
      */
     ProbabilityBag bag(CraftingDifficultyModel craftingModel) {
-        ProbabilityBag craftable = craftingModel.propagate(withView(part(Part.DROPS), viewedDrops()));
-        return ProbabilityBag.mean(List.of(craftable, withView(part(Part.STAND_ON), viewedBlocks())));
+        ProbabilityBag craftable = craftingModel.propagate(mixed(part(Part.DROPS), viewedDrops(), part(Part.CARRIED)));
+        return ProbabilityBag.mean(List.of(craftable, mixed(part(Part.STAND_ON), viewedBlocks(), part(Part.CARRIED_BLOCKS))));
     }
 
     /**
-     * @return the nearby bag and the viewed bag mixed so that {@link #VIEW_WEIGHT} of the weight comes from what is
-     * seen, or just whichever of the two has anything in it
+     * @return the three bags mixed so that {@link #VIEW_WEIGHT} of the weight comes from what is seen and
+     * {@link #INVENTORY_WEIGHT} from what is carried, leaving the rest for what is nearby. A bag with nothing in it
+     * gives up its share to the others.
      */
-    private static ProbabilityBag withView(ProbabilityBag nearby, ProbabilityBag viewed) {
-        if (viewed.isEmpty()) return nearby;
-        if (nearby.isEmpty()) return viewed;
-        return new ProbabilityBag()
-                .addNormalised(nearby, 1 - VIEW_WEIGHT)
-                .addNormalised(viewed, VIEW_WEIGHT);
+    private static ProbabilityBag mixed(ProbabilityBag nearby, ProbabilityBag viewed, ProbabilityBag carried) {
+        double viewShare = viewed.isEmpty() ? 0 : VIEW_WEIGHT;
+        double carriedShare = carried.isEmpty() ? 0 : INVENTORY_WEIGHT;
+        ProbabilityBag mixed = new ProbabilityBag().addNormalised(viewed, viewShare).addNormalised(carried, carriedShare);
+        return mixed.addNormalised(nearby, 1 - viewShare - carriedShare);
     }
 }
