@@ -49,7 +49,7 @@ public class GameListeners implements Listener {
 
     @EventHandler
     public void onRespawn(PlayerPostRespawnEvent e) {
-        if (game.isPlayerAlive(e.getPlayer())) {
+        if (game.isPlayerAlive(e.getPlayer()) && !e.isBedSpawn() && !e.isAnchorSpawn()) {
             game.spawnPlayer(e.getPlayer());
         }
     }

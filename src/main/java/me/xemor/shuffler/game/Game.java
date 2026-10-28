@@ -101,6 +101,7 @@ public class Game {
             player.getInventory().close();
             player.getInventory().clear();
             player.setItemOnCursor(null);
+            player.setRespawnLocation(null);
             ItemStack goldenCarrots = new ItemStack(Material.GOLDEN_CARROT, STARTING_CARROTS);
             goldenCarrots.addUnsafeEnchantment(Enchantment.VANISHING_CURSE, 1);
             player.getInventory().addItem(goldenCarrots);
