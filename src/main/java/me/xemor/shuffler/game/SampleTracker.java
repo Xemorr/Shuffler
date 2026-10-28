@@ -5,6 +5,8 @@ import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.BundleMeta;
+import org.jetbrains.annotations.Nullable;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.Collection;
@@ -93,13 +95,22 @@ final class SampleTracker extends BukkitRunnable {
 
         // Each search gets a sample of its own, which joins the player's history when the search ends.
         sample = new PlayerSample();
-        for (ItemStack stack : player.getInventory().getContents()) {
-            if (stack != null) sample.addCarried(stack.getType());
-        }
+        for (ItemStack stack : player.getInventory().getContents()) addCarried(stack);
         search = new NearbySearch(player, sample, dropsCache);
         view = new ViewSampler(player.getEyeLocation(), player, VIEW_RAYS_PER_SEARCH, sample.viewedDrops(), sample.viewedBlocks(), viewDropsCache);
         ticksRunning = 0;
         return true;
+    }
+
+    /**
+     * Counts a stack the player is carrying, and what is inside it if it is a bundle.
+     */
+    private void addCarried(@Nullable ItemStack stack) {
+        if (stack == null) return;
+        sample.addCarried(stack.getType());
+        if (stack.getItemMeta() instanceof BundleMeta bundle) {
+            for (ItemStack inside : bundle.getItems()) addCarried(inside);
+        }
     }
 
     /**
