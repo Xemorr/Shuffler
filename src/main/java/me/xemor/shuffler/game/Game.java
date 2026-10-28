@@ -273,34 +273,7 @@ public class Game {
     private void handleRoundEnd() {
         futuresWaitingOn.clear();
         if (alivePlayers.containsAll(searchingFor.keySet()) && searchingFor.keySet().containsAll(alivePlayers) && !extension) {
-            roundEnds = Instant.now().plusSeconds(300);
-            extension = true;
-
-            Component mainTitle = MiniMessage.miniMessage().deserialize("<rainbow>Extension</rainbow>");
-            Component subtitle = Component.text("Find any item to survive this round!", NamedTextColor.WHITE);
-
-            Title.Times times = Title.Times.times(
-                    Duration.ofMillis(500),  // Fade in
-                    Duration.ofSeconds(3),   // Stay
-                    Duration.ofMillis(500)   // Fade out
-            );
-
-            Title title = Title.title(mainTitle, subtitle, times);
-
-            List<Material> allMaterialsToSearchFor = new ArrayList<>(searchingFor.values());
-            searchingFor.clear();
-            for (UUID alivePlayer : alivePlayers) {
-                searchingFor.putAll(alivePlayer, allMaterialsToSearchFor);
-                Player player = Bukkit.getPlayer(alivePlayer);
-                if (player == null) continue;
-                player.showTitle(title);
-                player.sendMessage(Component.text("Find any of: ").append(
-                        allMaterialsToSearchFor.stream()
-                                .map((it) -> Component.text().append(SearchingForFormatter.getFriendlyName(it)))
-                                .reduce((a, b) -> a.append(Component.text(" ")).append(b))
-                                .orElse(Component.text())
-                ));
-            }
+            handleExtension();
         } else {
             level++;
             deadPlayers.putAll(
@@ -315,6 +288,37 @@ public class Game {
             } else {
                 startNextLevel();
             }
+        }
+    }
+
+    private void handleExtension() {
+        roundEnds = Instant.now().plusSeconds(300);
+        extension = true;
+
+        Component mainTitle = MiniMessage.miniMessage().deserialize("<rainbow>Extension</rainbow>");
+        Component subtitle = Component.text("Find any item to survive this round!", NamedTextColor.WHITE);
+
+        Title.Times times = Title.Times.times(
+                Duration.ofMillis(500),  // Fade in
+                Duration.ofSeconds(3),   // Stay
+                Duration.ofMillis(500)   // Fade out
+        );
+
+        Title title = Title.title(mainTitle, subtitle, times);
+
+        List<Material> allMaterialsToSearchFor = new ArrayList<>(searchingFor.values());
+        searchingFor.clear();
+        for (UUID alivePlayer : alivePlayers) {
+            searchingFor.putAll(alivePlayer, allMaterialsToSearchFor);
+            Player player = Bukkit.getPlayer(alivePlayer);
+            if (player == null) continue;
+            player.showTitle(title);
+            player.sendMessage(Component.text("Find any of: ").append(
+                    allMaterialsToSearchFor.stream()
+                            .map((it) -> Component.text().append(SearchingForFormatter.getFriendlyName(it)))
+                            .reduce((a, b) -> a.append(Component.text(" ")).append(b))
+                            .orElse(Component.text())
+            ));
         }
     }
 

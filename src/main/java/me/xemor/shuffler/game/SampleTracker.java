@@ -1,9 +1,7 @@
 package me.xemor.shuffler.game;
 
 import me.xemor.shuffler.Shuffler;
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.Material;
+import org.bukkit.*;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.BundleMeta;
@@ -107,7 +105,7 @@ final class SampleTracker extends BukkitRunnable {
     /**
      * Counts a stack the player is carrying, and what is inside it if it is a bundle.
      */
-    private void addCarried(@Nullable ItemStack stack) {
+    private void addCarried(ItemStack stack) {
         if (stack == null) return;
         sample.addCarried(stack.getType(), stack.getAmount());
         if (stack.getItemMeta() instanceof BundleMeta bundle) {
@@ -128,7 +126,7 @@ final class SampleTracker extends BukkitRunnable {
     private void finishSearch() {
         if (!sample.isEmpty()) historyOf(player).add(System.nanoTime() / 1e9, sample);
         if (player.isOnline()) {
-            player.sendMessage("§aYou and your surroundings have been sampled into the bag!");
+            player.getWorld().spawnParticle(Particle.DUST, player.getLocation().add(0, 0.5, 0), 50, 1, 1, 1, 1, new Particle.DustOptions(Color.PURPLE, 2));
         }
         search = null;
     }
