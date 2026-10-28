@@ -45,13 +45,13 @@ final class PlayerSample {
     }
 
     /**
-     * Records what the player is carrying, each kind of item once however many of it there are, so that a stack of
-     * cobblestone does not drown out the rest. Blocks also count towards what they could stand on.
+     * Records what the player is carrying, so a stack of 64 weighs 64 times a single item. Blocks also count
+     * towards what they could stand on.
      */
-    void addCarried(Material material) {
+    void addCarried(Material material, int amount) {
         if (material.isAir()) return;
-        part(Part.CARRIED).addWeighting(material, 1);
-        if (material.isBlock()) part(Part.CARRIED_BLOCKS).addWeighting(material, 1);
+        part(Part.CARRIED).addWeighting(material, amount);
+        if (material.isBlock()) part(Part.CARRIED_BLOCKS).addWeighting(material, amount);
     }
 
     ProbabilityBag viewedDrops() {

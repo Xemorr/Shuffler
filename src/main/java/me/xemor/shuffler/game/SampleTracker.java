@@ -109,7 +109,7 @@ final class SampleTracker extends BukkitRunnable {
      */
     private void addCarried(@Nullable ItemStack stack) {
         if (stack == null) return;
-        sample.addCarried(stack.getType());
+        sample.addCarried(stack.getType(), stack.getAmount());
         if (stack.getItemMeta() instanceof BundleMeta bundle) {
             for (ItemStack inside : bundle.getItems()) addCarried(inside);
         }
