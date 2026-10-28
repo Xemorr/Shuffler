@@ -14,6 +14,29 @@ public class ProbabilityBag {
 
     public ProbabilityBag() {}
 
+    /**
+     * @return the average of these bags, each counting equally however much weight it holds; bags with nothing in
+     * them are left out
+     */
+    public static ProbabilityBag mean(Collection<ProbabilityBag> bags) {
+        List<ProbabilityBag> filled = bags.stream().filter(bag -> !bag.isEmpty()).toList();
+        ProbabilityBag mean = new ProbabilityBag();
+        for (ProbabilityBag bag : filled) mean.addNormalised(bag, 1D / filled.size());
+        return mean;
+    }
+
+    public boolean isEmpty() {
+        return bag.isEmpty();
+    }
+
+    /**
+     * Adds another bag scaled so that all of it together is worth {@code share}, however much weight it holds.
+     */
+    public ProbabilityBag addNormalised(ProbabilityBag other, double share) {
+        for (Entry entry : other.entries()) addWeighting(entry.material(), entry.probability() * share);
+        return this;
+    }
+
     public List<Entry> entries() {
         return entries(totalWeighting);
     }

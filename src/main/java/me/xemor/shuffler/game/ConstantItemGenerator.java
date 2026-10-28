@@ -1,21 +1,18 @@
 package me.xemor.shuffler.game;
 
 import me.xemor.shuffler.game.crafting.CraftingDifficultyModel;
-import com.fasterxml.jackson.databind.util.LRUMap;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Streams;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import it.unimi.dsi.fastutil.objects.ObjectHeapPriorityQueue;
 import me.xemor.shuffler.Shuffler;
 import org.bukkit.*;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockFace;
 import org.bukkit.entity.*;
 import org.bukkit.event.Listener;
 import org.bukkit.inventory.*;
 import org.bukkit.loot.LootContext;
 import org.bukkit.loot.LootTables;
-import org.bukkit.scheduler.BukkitRunnable;
+
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
@@ -26,27 +23,8 @@ import java.util.stream.Stream;
 public class ConstantItemGenerator implements Listener {
 
     private final List<RecipeNode> recipeNodes;
-    private final ProbabilityBag availableMaterialsBag = new ProbabilityBag();
-    private final ProbabilityBag availableBlocksToStandOnBag = new ProbabilityBag();
-    // What the ray sampler saw from afar, kept apart so its share can be set exactly.
-    private final ProbabilityBag viewedMaterialsBag = new ProbabilityBag();
-    private final ProbabilityBag viewedBlocksBag = new ProbabilityBag();
     private final CraftingDifficultyModel craftingDifficultyModel;
-    // Tuned by ablation over 7 biome start points, scored on the final bag (propagated drops plus stand-on blocks, each
-    // half of the weight): keeps wood well above stone, and meat a little rarer than wood.
-    private static final double OCCLUDING_COST_SCALE = 1;
-    // These two used to fall with the game level (from 4.5 and 3 at level 1); they are now fixed at their level 1 values.
-    private static final double OCCLUDING_COST_ADDITIVE = 4.5;
-    private static final double VERTICAL_COST = 3;
-    private static final double MOB_DROP_WEIGHT = 140;
-    // The share of the raw materials bag, and of the stand-on bag, that comes from what the player can see from afar.
-    private static final double VIEW_WEIGHT = 0.2;
-    private static final int VIEW_RAYS_PER_SEARCH = 1000;
-    // Rays share the nearby search's per-tick budget, which adapts to the server's TPS. A ray costs about as much as
-    // 5 search nodes (measured at 3-6 nodes warm with 100 mobs in range, more with heavy mob farms), and rays may use
-    // this share of the budget each tick.
-    private static final double VIEW_SHARE_OF_BUDGET = 0.1;
-    private static final int VIEW_RAY_COST = 5;
+    private final Map<UUID, PlayerSample> samples = new HashMap<>();
 
     public ConstantItemGenerator() {
         this(CraftingDifficultyModel.Type.fromConfig(Shuffler.getInstance().getConfigYaml().game().craftingModel()));
@@ -89,227 +67,11 @@ public class ConstantItemGenerator implements Listener {
         }
     }
 
-    public record DijkstraNode(DijkstraLocation location, double distanceFromSource) {}
-
-    public record DijkstraLocation(int x, int y, int z) {
-        public DijkstraLocation(Location location) {
-            this(location.getBlockX(), location.getBlockY(), location.getBlockZ());
-        }
-
-        public long toLong() {
-            final int NUM_X_BITS = 26;
-            final int NUM_Z_BITS = NUM_X_BITS;
-            final int NUM_Y_BITS = 64 - NUM_X_BITS - NUM_Z_BITS;
-            final int Y_SHIFT = NUM_Z_BITS;
-            final int X_SHIFT = Y_SHIFT + NUM_Y_BITS;
-            final long X_MASK = (1L << NUM_X_BITS) - 1L;
-            final long Y_MASK = (1L << NUM_Y_BITS) - 1L;
-            final long Z_MASK = (1L << NUM_Z_BITS) - 1L;
-            return ((long) x & X_MASK) << X_SHIFT | ((long) y & Y_MASK) << Y_SHIFT | ((long) z & Z_MASK);
-        }
-
-        public Location toLocation(World world) {
-            return new Location(world, x, y, z);
-        }
-
-        public DijkstraLocation add(int x, int y, int z) {
-            return new DijkstraLocation(this.x + x, this.y + y, this.z + z);
-        }
-
-        public DijkstraLocation clone() {
-            return new DijkstraLocation(x, y, z);
-        }
-    }
-
+    /**
+     * Starts sampling around the players of this game, which fills the bags {@link #getBagForPlayers} reads.
+     */
     public void setupLegalItemsTracker(Game game) {
-        new BukkitRunnable() {
-            private ObjectHeapPriorityQueue<DijkstraNode> queue = null;
-            private LongOpenHashSet visited = null;
-            private final LRUMap<Material, Collection<ItemStack>> dropsCache = new LRUMap<>(100, 100);
-            private Set<UUID> seenEntities = null;
-            private ViewSampler viewSampler = null;
-            private final Map<Material, Collection<ItemStack>> viewDropsCache = ViewSampler.newCache();
-            private World world = null;
-            private int ticksRunning = 0;
-            private DijkstraLocation start = null;
-            private Player selectedPlayer = null;
-            private double maxDistance = 0;
-            private int yCap = 1000;
-            private final int MAX_TICKS = 200;
-            private int BUDGET_PER_TICK = 6000;
-            private int BUDGET_DELTA = 1000;
-
-            @Override
-            public void run() {
-                if (queue == null || !selectedPlayer.isOnline()) {
-                    List<? extends Player> players = Bukkit.getOnlinePlayers().stream()
-                            .filter(game::isPlayerAlive).toList();
-                    if (players.isEmpty()) return;
-
-                    selectedPlayer = players.get(ThreadLocalRandom.current().nextInt(players.size()));
-                    world = selectedPlayer.getWorld();
-                    start = new DijkstraLocation(selectedPlayer.getEyeLocation());
-
-                    queue = new ObjectHeapPriorityQueue<>(Comparator.comparing(DijkstraNode::distanceFromSource));
-                    visited = new LongOpenHashSet();
-                    seenEntities = new HashSet<>();
-                    ticksRunning = 0;
-                    maxDistance = 0;
-                    yCap = selectedPlayer.getWorld().getHighestBlockYAt(start.x(), start.z()) + 5;
-
-                    queue.enqueue(new DijkstraNode(start, 0));
-                    visited.add(new DijkstraLocation(start.x(), start.y(), start.z()).toLong());
-                    viewSampler = new ViewSampler(selectedPlayer.getEyeLocation(), selectedPlayer, VIEW_RAYS_PER_SEARCH, viewedMaterialsBag, viewedBlocksBag, viewDropsCache);
-                }
-
-                int spentThisTick = 0;
-                if (viewSampler != null && !viewSampler.finished()) {
-                    int rays = (int) (BUDGET_PER_TICK * VIEW_SHARE_OF_BUDGET / VIEW_RAY_COST);
-                    viewSampler.step(rays);
-                    spentThisTick = rays * VIEW_RAY_COST;
-                }
-
-                int processedThisTick = spentThisTick;
-                while (!queue.isEmpty() && processedThisTick < BUDGET_PER_TICK) {
-                    DijkstraNode node = queue.dequeue();
-                    DijkstraLocation location = node.location();
-                    processedThisTick++;
-
-                    maxDistance = Math.max(maxDistance, node.distanceFromSource());
-                    double distanceMultiplier = distanceMultiplier(node.distanceFromSource());
-
-                    Block block = location.toLocation(world).getBlock();
-                    if (!block.getType().isAir()) {
-                        Collection<ItemStack> drops = dropsCache.get(block.getType());
-                        if (drops == null) {
-                            drops = block.getDrops();
-                            dropsCache.put(block.getType(), drops);
-                        }
-                        for (ItemStack drop : drops) {
-                            if (drop.getType().isAir()) continue;
-                            availableMaterialsBag.addWeighting(drop.getType(), distanceMultiplier);
-                        }
-                        availableBlocksToStandOnBag.addWeighting(block.getType(), distanceMultiplier);
-                    }
-                    int i = ThreadLocalRandom.current().nextInt(5 * 5 * 5);
-                    if (i == 1) {
-                        Collection<Entity> nearbyEntities = world.getNearbyEntities(location.toLocation(world), 5, 5, 5);
-                        List<Material> mobDrops = nearbyEntities.stream().filter(entity -> !seenEntities.contains(entity.getUniqueId())).flatMap((entity) -> {
-                            seenEntities.add(entity.getUniqueId());
-                            return mobDrops(entity, selectedPlayer).stream();
-                        }).toList();
-                        for (Material mobDrop : mobDrops) {
-                            if (mobDrop.isAir()) continue;
-                            availableMaterialsBag.addWeighting(mobDrop, MOB_DROP_WEIGHT * distanceMultiplier);
-                        }
-                    }
-
-                    for (BlockFace face : new BlockFace[]{BlockFace.NORTH, BlockFace.SOUTH, BlockFace.EAST, BlockFace.WEST, BlockFace.UP, BlockFace.DOWN}) {
-                        DijkstraLocation neighbour = location.add(face.getModX(), face.getModY(), face.getModZ());
-                        if (neighbour.y() > yCap) continue;
-                        if (visited.add(neighbour.toLong())) {
-                            boolean occluding = block.getType().isOccluding();
-                            boolean water = block.getType() == Material.WATER;
-                            double weighting = 1;
-                            if (water) weighting *= (1.5 + OCCLUDING_COST_ADDITIVE);
-                            else if (occluding) weighting *= (2.5 + OCCLUDING_COST_ADDITIVE) * OCCLUDING_COST_SCALE;
-                            if (face == BlockFace.UP) weighting *= 1.25;
-                            if (face == BlockFace.UP || face == BlockFace.DOWN) weighting *= VERTICAL_COST;
-                            queue.enqueue(new DijkstraNode(neighbour, node.distanceFromSource() + weighting));
-                        }
-                    }
-                }
-
-                ticksRunning++;
-
-                if (queue.isEmpty() || ticksRunning >= MAX_TICKS) {
-                    if (selectedPlayer != null && selectedPlayer.isOnline()) {
-                        selectedPlayer.sendMessage(String.format("§aTracker reached maximum spread: §Distance: %.2f blocks", maxDistance));
-                    }
-                    if (ticksRunning >= MAX_TICKS) {
-                        if (!queue.isEmpty()) {
-                            Shuffler.getInstance().getLogger().fine("Tracker did not finish in " + MAX_TICKS + " ticks. Remaining queue size: " + queue.size());
-                            if (Bukkit.getTPS()[0] >= 19.9) {
-                                BUDGET_PER_TICK += BUDGET_DELTA;
-                                BUDGET_DELTA = Math.max(50, BUDGET_DELTA - 5);
-                            }
-                            else {
-                                BUDGET_PER_TICK -= BUDGET_DELTA;
-                                BUDGET_DELTA = Math.max(50, BUDGET_DELTA - 5);
-                            }
-                            System.out.println(BUDGET_PER_TICK);
-                        }
-                        queue = null;
-                    }
-                }
-            }
-        }.runTaskTimer(Shuffler.getInstance(), 0, 1);
-    }
-
-    private double distanceMultiplier(double distanceFromSource) {
-        return Math.pow(0.985, distanceFromSource);
-    }
-
-    private ProbabilityBag flattenedCraftingProbabilities(ProbabilityBag rootBag, int iterations) {
-        List<RecipeNode> allRecipes = recipeNodes;
-        ProbabilityBag startingBag = new ProbabilityBag();
-        for (ProbabilityBag.Entry entry : rootBag.entries()) {
-            startingBag.addWeighting(entry.material(), entry.probability());
-        }
-        ProbabilityBag currentState = new ProbabilityBag().addWeighting(startingBag);
-
-        // Group recipes by their output Material to evaluate them together
-        Map<Material, List<RecipeNode>> recipesByResult = allRecipes.stream()
-                .collect(Collectors.groupingBy(RecipeNode::material));
-
-        // Iterate to propagate probabilities through loops
-        for (int i = 0; i < iterations; i++) {
-            ProbabilityBag nextState = new ProbabilityBag().addWeighting(startingBag);
-
-            for (Map.Entry<Material, List<RecipeNode>> entry : recipesByResult.entrySet()) {
-                Material resultMaterial = entry.getKey();
-                double recipeWeightSum = 0D;
-
-                for (RecipeNode recipe : entry.getValue()) {
-                    // Re-using your exact Vibe Math, but pulling from currentState
-                    Map<Material, Integer> groupedIngredients = recipe.ingredients();
-
-                    if (!currentState.containsAll(groupedIngredients.keySet())) {
-                        continue;
-                    }
-
-                    final ProbabilityBag effectivelyFinalCurrentState = currentState;
-                    // Maybe I should do a check to see if they're 'crafting independent' or not
-                    double independentP = groupedIngredients.entrySet().stream()
-                            .map(it -> effectivelyFinalCurrentState.get(it.getKey()) / it.getValue())
-                            .reduce(1D, (x, y) -> x * y);
-
-                    if (independentP == 1D) independentP = 0D;
-
-                    double minP = groupedIngredients.keySet().stream()
-                            .map(currentState::get)
-                            .reduce(Double.MAX_VALUE, Math::min);
-
-                    if (minP == Double.MAX_VALUE) minP = 0D;
-
-                    double p = (minP * 0.9 + 0.1 * independentP);
-                    if (recipe.recipeType() == RecipeType.COOKING) {
-                        p *= 0.97;
-                    }
-                    p *= recipe.amount();
-
-                    // Sum to better represent the difficulty of e.g sticks, rather than taking max.
-                    recipeWeightSum += p;
-                }
-
-                if (recipeWeightSum > 0) {
-                    // Update the next state with the best crafted weight
-                    nextState.maxWeighting(resultMaterial, recipeWeightSum);
-                }
-            }
-            currentState = nextState; // Move to next time step
-        }
-        return currentState;
+        new SampleTracker(game, samples).runTaskTimer(Shuffler.getInstance(), 0, 1);
     }
 
     private List<RecipeNode> unorderedRecipeNodes() {
@@ -541,22 +303,27 @@ public class ConstantItemGenerator implements Listener {
         return bag;
     }
 
+    /**
+     * Works out each player's bag from what has been sampled around them alone and only then averages them, so that
+     * an item needing things from where different players are (a cave and the surface) is not made to look easy by
+     * pretending everyone is in the same place. Players who have not been sampled yet are left out.
+     */
     public ProbabilityBag getBagForPlayers(Collection<? extends Player> alivePlayers) {
         if (alivePlayers.isEmpty()) throw new IllegalArgumentException("Alive players must contain at least one player");
 
-        ProbabilityBag bag = craftingDifficultyModel.propagate(withView(availableMaterialsBag, viewedMaterialsBag));
-        for (ProbabilityBag.Entry standOnEntry : withView(availableBlocksToStandOnBag, viewedBlocksBag).entries()) {
-            bag.addWeighting(standOnEntry.material(), standOnEntry.probability());
-        }
-
-        return bag;
+        return ProbabilityBag.mean(alivePlayers.stream()
+                .map(player -> samples.get(player.getUniqueId()))
+                .filter(sample -> sample != null && !sample.isEmpty())
+                .map(sample -> sample.bag(craftingDifficultyModel))
+                .toList());
     }
 
     /**
      * @return the materials one kill of this mob would drop, rolled from its loot table; none for babies and for mobs
      * without a loot table
+     * @param killer who killed it, or null for nobody
      */
-    static List<Material> mobDrops(Entity entity, Player killer) {
+    static List<Material> mobDrops(Entity entity, @Nullable Player killer) {
         if (entity instanceof Ageable ageable && !ageable.isAdult()) return List.of();
         EntityType type = entity.getType();
         LootTables lootTables = switch (type) {
@@ -567,25 +334,10 @@ public class ConstantItemGenerator implements Listener {
             default -> Registry.LOOT_TABLES.get(NamespacedKey.minecraft("entities/" + entity.getType().getKey().getKey().toLowerCase()));
         };
         if (lootTables == null) return List.of();
-        return lootTables.getLootTable().populateLoot(ThreadLocalRandom.current(), (new LootContext.Builder(entity.getLocation()).lootedEntity(entity).killer(killer)).build())
+        LootContext.Builder context = new LootContext.Builder(entity.getLocation()).lootedEntity(entity);
+        if (killer != null) context.killer(killer);
+        return lootTables.getLootTable().populateLoot(ThreadLocalRandom.current(), context.build())
                 .stream().map(ItemStack::getType).toList();
-    }
-
-    /**
-     * @return the nearby bag and the viewed bag mixed so that {@link #VIEW_WEIGHT} of the weight comes from what is seen,
-     * or just the nearby bag if nothing has been seen yet
-     */
-    private static ProbabilityBag withView(ProbabilityBag nearby, ProbabilityBag viewed) {
-        List<ProbabilityBag.Entry> viewedEntries = viewed.entries();
-        if (viewedEntries.isEmpty()) return nearby;
-        ProbabilityBag mixed = new ProbabilityBag();
-        for (ProbabilityBag.Entry entry : nearby.entries()) {
-            mixed.addWeighting(entry.material(), entry.probability() * (1 - VIEW_WEIGHT));
-        }
-        for (ProbabilityBag.Entry entry : viewedEntries) {
-            mixed.addWeighting(entry.material(), entry.probability() * VIEW_WEIGHT);
-        }
-        return mixed;
     }
 
 }

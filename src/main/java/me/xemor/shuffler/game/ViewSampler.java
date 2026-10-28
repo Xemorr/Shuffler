@@ -12,6 +12,8 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 
+import org.jetbrains.annotations.Nullable;
+
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.Map;
@@ -35,15 +37,15 @@ final class ViewSampler {
     static final double MAX_PITCH_SINE = Math.sin(Math.toRadians(45));
 
     private final World world;
-    private final Player player;
+    private final @Nullable Player killer;
     private final Location eye;
     private final double range;
     private final ProbabilityBag drops, blocks;
     private final Map<Material, Collection<ItemStack>> dropsCache;
     private int remaining;
 
-    ViewSampler(Location eye, Player player, int rays, ProbabilityBag drops, ProbabilityBag blocks, Map<Material, Collection<ItemStack>> dropsCache) {
-        this.player = player;
+    ViewSampler(Location eye, @Nullable Player killer, int rays, ProbabilityBag drops, ProbabilityBag blocks, Map<Material, Collection<ItemStack>> dropsCache) {
+        this.killer = killer;
         this.eye = eye.clone();
         this.world = eye.getWorld();
         this.range = loadedRange(this.world, eye);
@@ -109,7 +111,7 @@ final class ViewSampler {
         Entity entity = result.getHitEntity();
         if (entity != null) {
             boolean dropped = false;
-            for (Material drop : ConstantItemGenerator.mobDrops(entity, player)) {
+            for (Material drop : ConstantItemGenerator.mobDrops(entity, killer)) {
                 if (drop.isAir()) continue;
                 drops.addWeighting(drop, 1);
                 dropped = true;
