@@ -40,6 +40,8 @@ import static org.bukkit.Bukkit.getServer;
 public class Game {
 
     private static Game instance;
+    static final int STARTING_CARROTS = 10;
+    static final int STARTING_TORCHES = 64;
 
     private final List<CompletableFuture<Void>> futuresWaitingOn = new ArrayList<>();
     private SetMultimap<UUID, Material> searchingFor = MultimapBuilder.hashKeys().hashSetValues().build();
@@ -99,6 +101,11 @@ public class Game {
             player.getInventory().close();
             player.getInventory().clear();
             player.setItemOnCursor(null);
+            player.setRespawnLocation(null);
+            ItemStack goldenCarrots = new ItemStack(Material.GOLDEN_CARROT, STARTING_CARROTS);
+            goldenCarrots.addUnsafeEnchantment(Enchantment.VANISHING_CURSE, 1);
+            player.getInventory().addItem(goldenCarrots);
+            player.getInventory().addItem(new ItemStack(ThreadLocalRandom.current().nextInt(10) == 1 ? Material.COPPER_TORCH : Material.TORCH, STARTING_TORCHES));
             for (String playerCommand : Shuffler.getInstance().getConfigYaml().automating().commandsPerPlayerOnStart()) {
                 getServer().dispatchCommand(Bukkit.getConsoleSender(), playerCommand.replace("<player>", player.getName()));
             }
@@ -204,10 +211,6 @@ public class Game {
 
     public CompletableFuture<Boolean> spawnPlayer(Player player) {
         Spawnpoint spawnpoint = spawnpoints.get(player.getUniqueId());
-        ItemStack goldenCarrots = new ItemStack(Material.GOLDEN_CARROT, 10);
-        goldenCarrots.addUnsafeEnchantment(Enchantment.VANISHING_CURSE, 1);
-        player.getInventory().addItem(goldenCarrots);
-        player.getInventory().addItem(new ItemStack(ThreadLocalRandom.current().nextInt(10) == 1 ? Material.COPPER_TORCH : Material.TORCH, 64));
         return switch (spawnpoint) {
             case Spawnpoint(Spawnpoint.SpawnType spawntype, Location location) when spawntype == STANDARD -> {
                 yield player.teleportAsync(location);

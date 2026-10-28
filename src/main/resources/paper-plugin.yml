@@ -1,7 +1,7 @@
 name: Shuffler
 version: ${version}
 main: me.xemor.shuffler.Shuffler
-api-version: '1.21.10'
+api-version: '26.3'
 description: Adds block shuffle to your server.
 loader: me.xemor.shuffler.DependencyLoader
 dependencies:
