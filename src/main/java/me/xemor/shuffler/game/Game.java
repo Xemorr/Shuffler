@@ -4,6 +4,7 @@ import com.google.common.collect.MultimapBuilder;
 import com.google.common.collect.SetMultimap;
 import me.xemor.shuffler.Shuffler;
 import me.xemor.shuffler.rating.RatingHandler;
+import me.xemor.shuffler.sprite.SpriteMap;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
@@ -25,6 +26,7 @@ import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -33,6 +35,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static me.xemor.shuffler.game.Spawnpoint.SpawnType.*;
 import static org.bukkit.Bukkit.getServer;
@@ -45,6 +48,7 @@ public class Game {
 
     private final List<CompletableFuture<Void>> futuresWaitingOn = new ArrayList<>();
     private SetMultimap<UUID, Material> searchingFor = MultimapBuilder.hashKeys().hashSetValues().build();
+    private final Map<UUID, Material> foundThisRound = new HashMap<>();
     private final Map<UUID, Spawnpoint> spawnpoints = new HashMap<>();
     private Set<UUID> alivePlayers = new HashSet<>();
     private final Map<UUID, Integer> deadPlayers = new HashMap<>();
@@ -110,6 +114,7 @@ public class Game {
                 getServer().dispatchCommand(Bukkit.getConsoleSender(), playerCommand.replace("<player>", player.getName()));
             }
         }
+        refreshTabNames();
         List<CompletableFuture<Boolean>> futures = teleportPlayersAndSetSpawnpoints(Bukkit.getOnlinePlayers());
         for (String command : Shuffler.getInstance().getConfigYaml().automating().commandsOnStart()) {
             getServer().dispatchCommand(Bukkit.getConsoleSender(), command);
@@ -304,6 +309,7 @@ public class Game {
                     .collect(Collectors.toMap((it) -> it, (_) -> level))
             );
             alivePlayers.removeAll(searchingFor.keySet());
+            refreshTabNames();
             if (alivePlayers.isEmpty() || !deadPlayers.isEmpty() && alivePlayers.size() == 1) {
                 handleGameEnd();
             } else {
@@ -383,6 +389,8 @@ public class Game {
         bossBar.setTitle("Shuffling!");
         bossBar.setProgress(1.0);
         searchingFor.clear();
+        foundThisRound.clear();
+        refreshTabNames();
 
         ProbabilityBag bag = itemGenerator.getBagForPlayers(
                 alivePlayers.stream().map(Bukkit::getPlayer).filter(Objects::nonNull).toList()
@@ -451,22 +459,27 @@ public class Game {
 
             Set<Material> materials = searchingFor.get(player.getUniqueId());
 
-            if (hasPlayerFoundItem(player, materials)) {
+            Material found = findFoundItem(player, materials);
+            if (found != null) {
                 announceItemFound(player, materials);
                 searchingFor.removeAll(player.getUniqueId());
+                foundThisRound.put(player.getUniqueId(), found);
+                updateTabName(player);
             }
 
             updatePlayerActionBar(player, materials);
         }
     }
 
-    private boolean hasPlayerFoundItem(Player player, Set<Material> materials) {
-        boolean inInventory = Arrays.stream(player.getInventory().getContents())
-                .anyMatch((item) -> item != null && materials.contains(item.getType()));
-
-        return materials.contains(player.getLocation().subtract(0, 1, 0).getBlock().getType())
-                || materials.contains(player.getLocation().getBlock().getType())
-                || inInventory;
+    private @Nullable Material findFoundItem(Player player, Set<Material> materials) {
+        Stream<Material> blocks = Stream.of(
+                player.getLocation().subtract(0, 1, 0).getBlock().getType(),
+                player.getLocation().getBlock().getType()
+        );
+        Stream<Material> inventory = Arrays.stream(player.getInventory().getContents())
+                .filter(Objects::nonNull)
+                .map(ItemStack::getType);
+        return Stream.concat(blocks, inventory).filter(materials::contains).findFirst().orElse(null);
     }
 
     private void announceItemFound(Player player, Set<Material> materials) {
@@ -496,6 +509,20 @@ public class Game {
 
     private int getMaximumTimeAllotted() {
         return 240 + Math.min(60, (level - 1) * 60);
+    }
+
+    private void refreshTabNames() {
+        Bukkit.getOnlinePlayers().forEach(this::updateTabName);
+    }
+
+    public void updateTabName(Player player) {
+        if (!alivePlayers.contains(player.getUniqueId())) {
+            player.playerListName(null);
+            return;
+        }
+        Material found = foundThisRound.get(player.getUniqueId());
+        Component status = found == null ? Component.text("?", NamedTextColor.GRAY) : SpriteMap.get(found);
+        player.playerListName(Component.text(player.getName()).appendSpace().append(status));
     }
 
     public boolean isPlayerAlive(Player player) {
