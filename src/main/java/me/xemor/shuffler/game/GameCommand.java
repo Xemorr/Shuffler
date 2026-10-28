@@ -28,14 +28,22 @@ public class GameCommand {
 
     @Subcommand("check")
     @CommandPermission("shuffler.game.check")
+    public void check(BukkitCommandActor actor) {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            check(actor, player);
+        }
+    }
+
+    @Subcommand("check")
+    @CommandPermission("shuffler.game.check")
     public void check(BukkitCommandActor actor, Player player) {
         Set<Material> materials = Game.getInstance().searchingFor(player);
         actor.audience().ifPresent((audience) -> {
             audience.sendMessage(
                     Component.text()
-                    .append(Component.text("%s is searching for ".formatted(player.getName())))
-                    .append(SearchingForFormatter.formatSearchMessage(materials))
-                    .append(Component.text("!"))
+                            .append(Component.text("%s is searching for ".formatted(player.getName())))
+                            .append(SearchingForFormatter.formatSearchMessage(materials))
+                            .append(Component.text("!"))
             );
         });
     }
