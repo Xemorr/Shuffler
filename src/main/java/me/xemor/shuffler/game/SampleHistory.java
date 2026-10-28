@@ -112,9 +112,10 @@ final class SampleHistory {
     }
 
     /**
-     * Combines several players' histories. Each player's finds are smoothed over time on their own, so finds by
-     * different players are independent however close in time they were. Only then are the players' windows around
-     * the same moment merged, each player counting equally, and crafting is worked out on each merged window.
+     * Combines several players' histories. Each player's finds are smoothed over time on their own, since finds
+     * close in time are more likely to be from the same place, and crafting is worked out on each of those windows
+     * on its own, so finds by different players are independent however close in time they were. Only the crafted
+     * bags of the players around the same moment are then merged, each player counting equally.
      *
      * @param spacing seconds between the moments, from the first snapshot of any player to the last
      */
@@ -128,18 +129,19 @@ final class SampleHistory {
         double last = Double.isInfinite(tau) ? start : end;
         for (double seconds = start; seconds <= last + 1e-9; seconds += spacing) {
             double moment = seconds;
-            List<PlayerSample> smoothed = filled.stream()
+            List<ProbabilityBag> crafted = filled.stream()
                     .map(history -> history.window(moment, tau))
                     .filter(Objects::nonNull)
+                    .map(window -> window.bag(craftingModel))
                     .toList();
-            if (!smoothed.isEmpty()) windows.add(new Window(moment, PlayerSample.mean(smoothed).bag(craftingModel)));
+            if (!crafted.isEmpty()) windows.add(new Window(moment, ProbabilityBag.mean(crafted)));
         }
         return windows;
     }
 
     /**
-     * @return the bag of these players together: crafting worked out for the merged window around each moment, then
-     * averaged
+     * @return the bag of these players together: the players' crafted windows around each moment merged, then the
+     * moments averaged
      */
     static ProbabilityBag bag(Collection<SampleHistory> histories, CraftingDifficultyModel craftingModel, double tau, double spacing) {
         return ProbabilityBag.mean(windows(histories, craftingModel, tau, spacing).stream().map(Window::bag).toList());

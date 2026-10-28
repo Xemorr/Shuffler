@@ -310,8 +310,8 @@ public class ConstantItemGenerator implements Listener {
     /**
      * Combines everything sampled around the alive players, as one bag would have. Each player's finds are smoothed
      * over time on their own, since finds close in time are more likely to be from the same place, but finds by
-     * different players are independent. The smoothed windows are then merged and crafting is worked out on each
-     * ({@link SampleHistory}). Players who have not been sampled yet add nothing.
+     * different players are independent. Crafting is worked out on each player's smoothed windows, and only then are the
+     * players merged ({@link SampleHistory}). Players who have not been sampled yet add nothing.
      */
     public ProbabilityBag getBagForPlayers(Collection<? extends Player> alivePlayers) {
         if (alivePlayers.isEmpty()) throw new IllegalArgumentException("Alive players must contain at least one player");
