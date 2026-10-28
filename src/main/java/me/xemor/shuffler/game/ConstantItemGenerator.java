@@ -25,7 +25,7 @@ public class ConstantItemGenerator implements Listener {
     private final List<RecipeNode> recipeNodes;
     private final CraftingDifficultyModel craftingDifficultyModel;
     private final Map<UUID, SampleHistory> histories = new HashMap<>();
-    /** Seconds apart that finds can be and still largely come from the same place, for one player. */
+    /** Seconds apart that finds can be and still largely come from the same place. */
     private static final double SAME_PLACE_TAU = 120;
     /** Seconds between the moments whose surroundings are worked out and averaged. */
     private static final double WINDOW_SPACING = 60;
@@ -308,19 +308,19 @@ public class ConstantItemGenerator implements Listener {
     }
 
     /**
-     * Works out each player's bag from what has been sampled around them alone and only then averages them, so that
-     * an item needing things from where different players are (a cave and the surface) is not made to look easy by
-     * pretending everyone is in the same place. Within one player, finds close in time count as more likely to be from
-     * the same place ({@link SampleHistory}). Players who have not been sampled yet are left out.
+     * Combines everything sampled around the alive players, as one bag would have: finds close in time count as more
+     * likely to be from the same place, whichever player they were near ({@link SampleHistory}). The smoothing over
+     * time comes first and crafting is worked out afterwards, on each smoothed window. Players who have not been
+     * sampled yet add nothing.
      */
     public ProbabilityBag getBagForPlayers(Collection<? extends Player> alivePlayers) {
         if (alivePlayers.isEmpty()) throw new IllegalArgumentException("Alive players must contain at least one player");
 
-        return ProbabilityBag.mean(alivePlayers.stream()
+        SampleHistory combined = SampleHistory.merge(alivePlayers.stream()
                 .map(player -> histories.get(player.getUniqueId()))
-                .filter(history -> history != null && !history.isEmpty())
-                .map(history -> history.bag(craftingDifficultyModel, SAME_PLACE_TAU, WINDOW_SPACING))
+                .filter(Objects::nonNull)
                 .toList());
+        return combined.bag(craftingDifficultyModel, SAME_PLACE_TAU, WINDOW_SPACING);
     }
 
     /**

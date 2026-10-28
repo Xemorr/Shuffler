@@ -4,6 +4,8 @@ import me.xemor.shuffler.game.crafting.CraftingDifficultyModel;
 import org.bukkit.Material;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -69,6 +71,19 @@ final class SampleHistory {
         Sparse[] sparse = new Sparse[parts.length];
         for (int i = 0; i < parts.length; i++) sparse[i] = Sparse.of(sample.part(parts[i]));
         snapshots.add(new Snapshot(seconds, sparse));
+    }
+
+    /**
+     * @return one history holding everything these histories found, in time order, so that finds from different
+     * players close in time count as likely to be from the same place, just as a single player's would
+     */
+    static SampleHistory merge(Collection<SampleHistory> histories) {
+        SampleHistory merged = new SampleHistory();
+        histories.stream()
+                .flatMap(history -> history.snapshots.stream())
+                .sorted(Comparator.comparingDouble(Snapshot::seconds))
+                .forEach(merged.snapshots::add);
+        return merged;
     }
 
     boolean isEmpty() {
