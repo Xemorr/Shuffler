@@ -76,6 +76,13 @@ final class SampleHistory {
     }
 
     /**
+     * @return how many searches have been recorded
+     */
+    int size() {
+        return snapshots.size();
+    }
+
+    /**
      * @param tau how many seconds apart finds can be and still count as largely the same place; infinity for no limit
      * @return the environment around this moment: every snapshot, weighted by how close in time it is, or null if
      * none is close enough to count

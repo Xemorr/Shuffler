@@ -13,6 +13,8 @@ import java.util.Map;
  * what one player can easily make depends on where they have actually been (someone spending the game in a cave
  * has plenty of iron, and someone on the surface has plenty of leather, but neither finds a saddle easy).
  * The players' bags are only merged at the end.
+ * <p>
+ * A sample is the result of one search; {@link SampleHistory} keeps a player's samples in time order.
  */
 final class PlayerSample {
 
@@ -23,7 +25,6 @@ final class PlayerSample {
     enum Part { DROPS, STAND_ON, VIEWED_DROPS, VIEWED_BLOCKS }
 
     private final Map<Part, ProbabilityBag> parts = new EnumMap<>(Part.class);
-    private int searches = 0;
 
     PlayerSample() {
         for (Part part : Part.values()) parts.put(part, new ProbabilityBag());
@@ -47,14 +48,6 @@ final class PlayerSample {
 
     ProbabilityBag viewedBlocks() {
         return part(Part.VIEWED_BLOCKS);
-    }
-
-    int searches() {
-        return searches;
-    }
-
-    void countSearch() {
-        searches++;
     }
 
     /**

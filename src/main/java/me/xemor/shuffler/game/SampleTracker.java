@@ -18,7 +18,7 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * Keeps sampling around the players while a game runs, one player at a time, spreading each search over many ticks.
  * The player with the fewest searches so far goes next, so everyone's sample fills at the same pace however long
- * they have been in the game.
+ * they have been in the game. Each search is recorded in the player's {@link SampleHistory} as it finishes.
  * <p>
  * The work done per tick adapts to the server: a search that runs out of time while still finding new blocks means
  * there was room to do more, if the server kept up with it.
@@ -37,7 +37,7 @@ final class SampleTracker extends BukkitRunnable {
     private static final int MIN_BUDGET_STEP = 50;
 
     private final Game game;
-    private final Map<UUID, PlayerSample> samples;
+    private final Map<UUID, SampleHistory> histories;
     private final Map<Material, Collection<ItemStack>> dropsCache = new LinkedHashMap<>(128, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<Material, Collection<ItemStack>> eldest) {
@@ -49,16 +49,17 @@ final class SampleTracker extends BukkitRunnable {
     private int budgetStep = 1000;
 
     private Player player = null;
+    private PlayerSample sample = null;
     private NearbySearch search = null;
     private ViewSampler view = null;
     private int ticksRunning = 0;
 
     /**
-     * @param samples where each player's sample is kept; the tracker adds to it
+     * @param histories where each player's searches are kept; the tracker adds to it
      */
-    SampleTracker(Game game, Map<UUID, PlayerSample> samples) {
+    SampleTracker(Game game, Map<UUID, SampleHistory> histories) {
         this.game = game;
-        this.samples = samples;
+        this.histories = histories;
     }
 
     @Override
@@ -86,12 +87,12 @@ final class SampleTracker extends BukkitRunnable {
         if (alive.isEmpty()) return false;
 
         // Players with the same number of searches are picked between at random.
-        int fewest = alive.stream().mapToInt(candidate -> sampleOf(candidate).searches()).min().orElseThrow();
-        List<? extends Player> due = alive.stream().filter(candidate -> sampleOf(candidate).searches() == fewest).toList();
+        int fewest = alive.stream().mapToInt(candidate -> historyOf(candidate).size()).min().orElseThrow();
+        List<? extends Player> due = alive.stream().filter(candidate -> historyOf(candidate).size() == fewest).toList();
         player = due.get(ThreadLocalRandom.current().nextInt(due.size()));
 
-        PlayerSample sample = sampleOf(player);
-        sample.countSearch();
+        // Each search gets a sample of its own, which joins the player's history when the search ends.
+        sample = new PlayerSample();
         search = new NearbySearch(player, sample, dropsCache);
         view = new ViewSampler(player.getEyeLocation(), player, VIEW_RAYS_PER_SEARCH, sample.viewedDrops(), sample.viewedBlocks(), viewDropsCache);
         ticksRunning = 0;
@@ -109,6 +110,7 @@ final class SampleTracker extends BukkitRunnable {
     }
 
     private void finishSearch() {
+        if (!sample.isEmpty()) historyOf(player).add(System.nanoTime() / 1e9, sample);
         if (player.isOnline()) {
             player.sendMessage(String.format("§aTracker reached maximum spread: §Distance: %.2f blocks", search.maxDistance()));
         }
@@ -125,7 +127,7 @@ final class SampleTracker extends BukkitRunnable {
         Shuffler.getInstance().getLogger().fine("Tracker did not finish in " + MAX_TICKS_PER_SEARCH + " ticks. Budget per tick is now " + budgetPerTick);
     }
 
-    private PlayerSample sampleOf(Player player) {
-        return samples.computeIfAbsent(player.getUniqueId(), _ -> new PlayerSample());
+    private SampleHistory historyOf(Player player) {
+        return histories.computeIfAbsent(player.getUniqueId(), _ -> new SampleHistory());
     }
 }
