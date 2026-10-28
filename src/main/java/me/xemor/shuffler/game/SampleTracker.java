@@ -2,6 +2,7 @@ package me.xemor.shuffler.game;
 
 import me.xemor.shuffler.Shuffler;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -127,7 +128,7 @@ final class SampleTracker extends BukkitRunnable {
     private void finishSearch() {
         if (!sample.isEmpty()) historyOf(player).add(System.nanoTime() / 1e9, sample);
         if (player.isOnline()) {
-            player.sendMessage(String.format("§aTracker reached maximum spread: §Distance: %.2f blocks", search.maxDistance()));
+            player.sendMessage("§aYou and your surroundings have been sampled into the bag!");
         }
         search = null;
     }
