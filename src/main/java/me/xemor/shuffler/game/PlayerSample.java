@@ -3,6 +3,7 @@ package me.xemor.shuffler.game;
 import me.xemor.shuffler.game.crafting.CraftingDifficultyModel;
 import org.bukkit.Material;
 
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -12,7 +13,7 @@ import java.util.Map;
  * and the same two for what they can see from afar. Crafting is worked out for each player's sample on its own, since
  * what one player can easily make depends on where they have actually been (someone spending the game in a cave
  * has plenty of iron, and someone on the surface has plenty of leather, but neither finds a saddle easy).
- * The players' bags are only merged at the end.
+ * The players' samples are only merged once each has been smoothed over time.
  * <p>
  * A sample is the result of one search; {@link SampleHistory} keeps a player's samples in time order.
  */
@@ -28,6 +29,17 @@ final class PlayerSample {
 
     PlayerSample() {
         for (Part part : Part.values()) parts.put(part, new ProbabilityBag());
+    }
+
+    /**
+     * @return the samples averaged part by part, each counting equally however much weight it holds
+     */
+    static PlayerSample mean(Collection<PlayerSample> samples) {
+        PlayerSample mean = new PlayerSample();
+        for (Part part : Part.values()) {
+            mean.parts.put(part, ProbabilityBag.mean(samples.stream().map(sample -> sample.part(part)).toList()));
+        }
+        return mean;
     }
 
     ProbabilityBag part(Part part) {

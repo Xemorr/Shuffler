@@ -308,19 +308,18 @@ public class ConstantItemGenerator implements Listener {
     }
 
     /**
-     * Combines everything sampled around the alive players, as one bag would have: finds close in time count as more
-     * likely to be from the same place, whichever player they were near ({@link SampleHistory}). The smoothing over
-     * time comes first and crafting is worked out afterwards, on each smoothed window. Players who have not been
-     * sampled yet add nothing.
+     * Combines everything sampled around the alive players, as one bag would have. Each player's finds are smoothed
+     * over time on their own, since finds close in time are more likely to be from the same place, but finds by
+     * different players are independent. The smoothed windows are then merged and crafting is worked out on each
+     * ({@link SampleHistory}). Players who have not been sampled yet add nothing.
      */
     public ProbabilityBag getBagForPlayers(Collection<? extends Player> alivePlayers) {
         if (alivePlayers.isEmpty()) throw new IllegalArgumentException("Alive players must contain at least one player");
 
-        SampleHistory combined = SampleHistory.merge(alivePlayers.stream()
+        return SampleHistory.bag(alivePlayers.stream()
                 .map(player -> histories.get(player.getUniqueId()))
                 .filter(Objects::nonNull)
-                .toList());
-        return combined.bag(craftingDifficultyModel, SAME_PLACE_TAU, WINDOW_SPACING);
+                .toList(), craftingDifficultyModel, SAME_PLACE_TAU, WINDOW_SPACING);
     }
 
     /**

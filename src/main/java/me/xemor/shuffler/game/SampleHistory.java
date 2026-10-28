@@ -5,8 +5,8 @@ import org.bukkit.Material;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * What one player's searches found, kept in time order so that how close in time two finds were can matter.
@@ -73,19 +73,6 @@ final class SampleHistory {
         snapshots.add(new Snapshot(seconds, sparse));
     }
 
-    /**
-     * @return one history holding everything these histories found, in time order, so that finds from different
-     * players close in time count as likely to be from the same place, just as a single player's would
-     */
-    static SampleHistory merge(Collection<SampleHistory> histories) {
-        SampleHistory merged = new SampleHistory();
-        histories.stream()
-                .flatMap(history -> history.snapshots.stream())
-                .sorted(Comparator.comparingDouble(Snapshot::seconds))
-                .forEach(merged.snapshots::add);
-        return merged;
-    }
-
     boolean isEmpty() {
         return snapshots.isEmpty();
     }
@@ -125,31 +112,36 @@ final class SampleHistory {
     }
 
     /**
-     * Works out crafting for the window around each of evenly spaced moments, from the first snapshot to the last.
+     * Combines several players' histories. Each player's finds are smoothed over time on their own, so finds by
+     * different players are independent however close in time they were. Only then are the players' windows around
+     * the same moment merged, each player counting equally, and crafting is worked out on each merged window.
      *
-     * @param spacing seconds between the moments
+     * @param spacing seconds between the moments, from the first snapshot of any player to the last
      */
-    List<Window> windows(CraftingDifficultyModel craftingModel, double tau, double spacing) {
+    static List<Window> windows(Collection<SampleHistory> histories, CraftingDifficultyModel craftingModel, double tau, double spacing) {
         List<Window> windows = new ArrayList<>();
-        if (snapshots.isEmpty()) return windows;
-        double start = snapshots.getFirst().seconds(), end = snapshots.getLast().seconds();
-        if (Double.isInfinite(tau)) {
-            // every window is the same one
-            PlayerSample everything = window(start, tau);
-            windows.add(new Window(start, everything.bag(craftingModel)));
-            return windows;
-        }
-        for (double seconds = start; seconds <= end + 1e-9; seconds += spacing) {
-            PlayerSample window = window(seconds, tau);
-            if (window != null) windows.add(new Window(seconds, window.bag(craftingModel)));
+        List<SampleHistory> filled = histories.stream().filter(history -> !history.isEmpty()).toList();
+        if (filled.isEmpty()) return windows;
+        double start = filled.stream().mapToDouble(history -> history.snapshots.getFirst().seconds()).min().orElseThrow();
+        double end = filled.stream().mapToDouble(history -> history.snapshots.getLast().seconds()).max().orElseThrow();
+        // with no limit on tau every window is the same one
+        double last = Double.isInfinite(tau) ? start : end;
+        for (double seconds = start; seconds <= last + 1e-9; seconds += spacing) {
+            double moment = seconds;
+            List<PlayerSample> smoothed = filled.stream()
+                    .map(history -> history.window(moment, tau))
+                    .filter(Objects::nonNull)
+                    .toList();
+            if (!smoothed.isEmpty()) windows.add(new Window(moment, PlayerSample.mean(smoothed).bag(craftingModel)));
         }
         return windows;
     }
 
     /**
-     * @return this player's bag: crafting worked out for the window around each moment, then averaged
+     * @return the bag of these players together: crafting worked out for the merged window around each moment, then
+     * averaged
      */
-    ProbabilityBag bag(CraftingDifficultyModel craftingModel, double tau, double spacing) {
-        return ProbabilityBag.mean(windows(craftingModel, tau, spacing).stream().map(Window::bag).toList());
+    static ProbabilityBag bag(Collection<SampleHistory> histories, CraftingDifficultyModel craftingModel, double tau, double spacing) {
+        return ProbabilityBag.mean(windows(histories, craftingModel, tau, spacing).stream().map(Window::bag).toList());
     }
 }
