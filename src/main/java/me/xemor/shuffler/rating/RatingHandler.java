@@ -82,7 +82,7 @@ public class RatingHandler implements Listener {
                     if (top100Leaderboard.stream().noneMatch((it) -> it.playerUUID().equals(rating.playerUUID()))) {
                         top100Leaderboard.add(rating);
                     }
-                    Rank rank = ranks.stream().filter(r -> rating.conservativeElo() >= r.threshold()).findFirst().orElseThrow(() -> new IllegalStateException("no valid rank for player with elo " + rating.conservativeElo()));
+                    Rank rank = getRank(rating.conservativeElo());
                     player.addAttachment(Shuffler.getInstance(), "shuffler.rank." + rank.name(), true);
                     if (!rating.name().equals(player.getName())) {
                         ctx.update(PLAYER).set(PLAYER.NAME, player.getName()).where(PLAYER.UUID.eq(player.getUniqueId())).execute();
@@ -151,7 +151,6 @@ public class RatingHandler implements Listener {
                 .orElse(ranks.getLast());
     }
 
-    /** Latest conservative elo from the database, or 0 if they've never played. Blocking. */
     public double fetchConservativeElo(UUID playerUUID) {
         Double elo = Shuffler.getInstance().getContext()
                 .select(ELO.CURRENT_ELO.minus(ELO.CURRENT_UNCERTAINTY.mul(3)))
