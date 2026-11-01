@@ -82,10 +82,10 @@ public class RatingHandler implements Listener {
                     if (top100Leaderboard.stream().noneMatch((it) -> it.playerUUID().equals(rating.playerUUID()))) {
                         top100Leaderboard.add(rating);
                     }
-                    Rank rank = ranks.stream().filter(r -> rating.conservativeElo() >= r.threshold()).findFirst().orElseThrow(() -> new IllegalStateException("no valid rank for player with elo " + rating.conservativeElo()));
+                    Rank rank = getRank(rating.conservativeElo());
                     player.addAttachment(Shuffler.getInstance(), "shuffler.rank." + rank.name(), true);
                     if (!rating.name().equals(player.getName())) {
-                        ctx.update(PLAYER).set(PLAYER.NAME, rating.name()).where(PLAYER.UUID.eq(player.getUniqueId())).execute();
+                        ctx.update(PLAYER).set(PLAYER.NAME, player.getName()).where(PLAYER.UUID.eq(player.getUniqueId())).execute();
                     }
                 });
             }
@@ -142,6 +142,25 @@ public class RatingHandler implements Listener {
 
     public Optional<PlayerConservativeRating> getPlayerRating(UUID playerUUID) {
         return Optional.ofNullable(playerConservativeRatings.get(playerUUID));
+    }
+
+    public Rank getRank(double conservativeElo) {
+        return ranks.stream()
+                .filter(r -> conservativeElo >= r.threshold())
+                .findFirst()
+                .orElse(ranks.getLast());
+    }
+
+    public double fetchConservativeElo(UUID playerUUID) {
+        Double elo = Shuffler.getInstance().getContext()
+                .select(ELO.CURRENT_ELO.minus(ELO.CURRENT_UNCERTAINTY.mul(3)))
+                .from(PLAYER)
+                .join(ELO).on(PLAYER.ID.eq(ELO.PLAYER_ID))
+                .where(PLAYER.UUID.eq(playerUUID))
+                .orderBy(ELO.INSERTED_AT.desc())
+                .limit(1)
+                .fetchOne(0, Double.class);
+        return elo != null ? elo : 0;
     }
 
     public void updateElo(List<PlayerRankPair> rankToUUID) {
