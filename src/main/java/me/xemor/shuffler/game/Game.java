@@ -66,6 +66,10 @@ public class Game {
         itemGenerator = new ConstantItemGenerator();
     }
 
+    public RatingHandler getRatingHandler() {
+        return ratingHandler;
+    }
+
     public int getLevel() {
         return level;
     }

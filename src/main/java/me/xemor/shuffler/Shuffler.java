@@ -12,6 +12,7 @@ import me.xemor.shuffler.game.Game;
 import me.xemor.shuffler.game.GameCommand;
 import me.xemor.shuffler.migrations.V1__Initial;
 import me.xemor.shuffler.migrations.V2__GameTable;
+import me.xemor.shuffler.rating.EloCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -38,6 +39,7 @@ public final class Shuffler extends JavaPlugin {
         // Plugin startup logic
         Lamp<BukkitCommandActor> lamp = BukkitLamp.builder(this).build();
         lamp.register(new GameCommand());
+        lamp.register(new EloCommand());
         ObjectMapper objectMapper = new ObjectMapper(new YAMLFactory());
         saveDefaultConfig();
         saveResource("database.yml", false);
