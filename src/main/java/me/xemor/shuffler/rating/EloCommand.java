@@ -15,7 +15,7 @@ public class EloCommand {
         OfflinePlayer player = target != null ? target : actor.requirePlayer();
         RatingHandler ratings = Game.getInstance().getRatingHandler();
         Bukkit.getScheduler().runTaskAsynchronously(Shuffler.getInstance(), () -> {
-            double elo = ratings.fetchConservativeElo(player.getUniqueId());
+            double elo = Math.max(0, ratings.fetchConservativeElo(player.getUniqueId()));
             actor.reply("%s's elo: %.2f (%s)".formatted(player.getName(), elo, ratings.getRank(elo).name()));
         });
     }
